@@ -1,0 +1,96 @@
+import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
+import { startWorkSession, endWorkSession } from '../services/sessionService';
+import { AttendanceSession } from '../models/AttendanceSession';
+import { EmployeeProfile } from '../models/EmployeeProfile';
+import { AppError } from '../middleware/errorHandler';
+
+export const startSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const employeeId = req.user?.employeeProfileId;
+    if (!employeeId) {
+      throw new AppError('No employee profile associated with this user account', 400);
+    }
+
+    const { deviceId } = req.body;
+    const session = await startWorkSession(req.companyId!, employeeId, deviceId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Work session started successfully.',
+      data: session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const endSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const employeeId = req.user?.employeeProfileId;
+    if (!employeeId) {
+      throw new AppError('No employee profile associated with this user account', 400);
+    }
+
+    const { sessionId, endReason } = req.body;
+    const session = await endWorkSession(req.companyId!, employeeId, sessionId, endReason);
+
+    res.status(200).json({
+      success: true,
+      message: 'Work session ended successfully.',
+      data: session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAttendanceSessions = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { employeeId, startDate, endDate, limit = '50' } = req.query;
+    const query: any = { companyId: new mongoose.Types.ObjectId(req.companyId) };
+
+    if (employeeId) {
+      query.employeeId = new mongoose.Types.ObjectId(employeeId as string);
+    }
+
+    if (startDate || endDate) {
+      query.startedAt = {};
+      if (startDate) query.startedAt.$gte = new Date(startDate as string);
+      if (endDate) query.startedAt.$lte = new Date(endDate as string);
+    }
+
+    const sessions = await AttendanceSession.find(query)
+      .populate('employeeId', 'employeeCode department')
+      .sort({ startedAt: -1 })
+      .limit(parseInt(limit as string, 10))
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: sessions
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getEmployeeAttendance = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { employeeId } = req.params;
+    const sessions = await AttendanceSession.find({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId)
+    })
+      .sort({ startedAt: -1 })
+      .limit(30)
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: sessions
+    });
+  } catch (error) {
+    next(error);
+  }
+};

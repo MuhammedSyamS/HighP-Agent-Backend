@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auditLogController_1 = require("../controllers/auditLogController");
+const auth_1 = require("../middleware/auth");
+const tenant_1 = require("../middleware/tenant");
+const shared_1 = require("@highp/shared");
+const router = (0, express_1.Router)();
+router.use(auth_1.authenticateUser);
+router.use(tenant_1.enforceTenant);
+router.use((0, auth_1.requireRoles)([shared_1.UserRole.OWNER, shared_1.UserRole.ADMIN]));
+router.get('/', auditLogController_1.getAuditLogs);
+exports.default = router;

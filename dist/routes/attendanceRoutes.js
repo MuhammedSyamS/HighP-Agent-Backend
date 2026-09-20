@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const attendanceController_1 = require("../controllers/attendanceController");
+const auth_1 = require("../middleware/auth");
+const tenant_1 = require("../middleware/tenant");
+const router = (0, express_1.Router)();
+router.use(auth_1.authenticateUser);
+router.use(tenant_1.enforceTenant);
+router.post('/start', attendanceController_1.startSession);
+router.post('/end', attendanceController_1.endSession);
+router.get('/', attendanceController_1.getAttendanceSessions);
+router.get('/:employeeId', attendanceController_1.getEmployeeAttendance);
+exports.default = router;

@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const applicationController_1 = require("../controllers/applicationController");
+const auth_1 = require("../middleware/auth");
+const tenant_1 = require("../middleware/tenant");
+const router = (0, express_1.Router)();
+router.use(auth_1.authenticateUser);
+router.use(tenant_1.enforceTenant);
+router.get('/usage', applicationController_1.getCompanyApplicationUsage);
+router.get('/usage/:employeeId', applicationController_1.getEmployeeApplicationUsage);
+exports.default = router;

@@ -1,0 +1,15 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const breakController_1 = require("../controllers/breakController");
+const auth_1 = require("../middleware/auth");
+const tenant_1 = require("../middleware/tenant");
+const validate_1 = require("../middleware/validate");
+const shared_1 = require("@highp/shared");
+const router = (0, express_1.Router)();
+router.use(auth_1.authenticateUser);
+router.use(tenant_1.enforceTenant);
+router.post('/start', (0, validate_1.validate)(shared_1.StartBreakSchema), breakController_1.start);
+router.post('/end', (0, validate_1.validate)(shared_1.EndBreakSchema), breakController_1.end);
+router.get('/', breakController_1.getBreaks);
+exports.default = router;
