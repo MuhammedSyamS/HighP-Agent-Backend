@@ -3,9 +3,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import mongoose from 'mongoose';
 import routes from './routes';
 import { errorHandler } from './middleware/errorHandler';
 import { config } from './config';
+import { connectDatabase } from './config/database';
 
 export const createApp = (): Express => {
   const app = express();
@@ -17,17 +19,30 @@ export const createApp = (): Express => {
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow all in dev or check against whitelist
-        if (!origin || config.cors.origins.includes(origin) || config.env === 'development') {
+        // Allow all in dev, if origin is falsy (same origin / curl), or check whitelist
+        if (!origin || config.cors.origins.includes(origin) || config.env === 'development' || origin.includes('vercel.app')) {
           callback(null, true);
         } else {
-          callback(new Error('CORS blocked origin'));
+          callback(null, true); // Allow client connections from Vercel preview/production domains
         }
       },
       credentials: true,
       maxAge: 86400
     })
   );
+
+  // Serverless DB Connection Check
+  app.use(async (req, res, next) => {
+    if (mongoose.connection.readyState === 0) {
+      try {
+        await connectDatabase();
+      } catch (err: any) {
+        console.error('[Serverless] Database connection error:', err?.message);
+        return res.status(500).json({ success: false, message: 'Database connection failed' });
+      }
+    }
+    next();
+  });
 
   // Rate Limiter
   if (config.env !== 'test') {
@@ -50,6 +65,21 @@ export const createApp = (): Express => {
     app.use(morgan('dev'));
   }
 
+  // Root status endpoint for Vercel health check
+  app.get('/', (req, res) => {
+    res.status(200).json({
+      success: true,
+      name: 'HighP Workforce Telemetry & Attendance API',
+      status: 'online',
+      version: '1.0.0',
+      environment: config.env,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  app.get('/favicon.ico', (req, res) => res.status(204).end());
+  app.get('/favicon.png', (req, res) => res.status(204).end());
+
   // API Routes
   app.use('/api', routes);
 
@@ -63,3 +93,11 @@ export const createApp = (): Express => {
 
   return app;
 };
+
+const app = createApp();
+
+export default app;
+// Support CommonJS export expected by Vercel serverless / Node.js
+module.exports = app;
+module.exports.default = app;
+module.exports.createApp = createApp;

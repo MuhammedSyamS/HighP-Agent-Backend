@@ -2,6 +2,10 @@ import mongoose from 'mongoose';
 import { config } from './index';
 
 export const connectDatabase = async (): Promise<typeof mongoose> => {
+  if (mongoose.connection.readyState >= 1) {
+    return mongoose;
+  }
+
   const primaryUri = config.mongoUri;
   const localFallbackUri = 'mongodb://127.0.0.1:27017/highphaus_workforce';
 
