@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { BreakReason } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { BreakReason } from '../shared';
 
 export interface IBreakDocument extends Document {
   companyId: mongoose.Types.ObjectId;

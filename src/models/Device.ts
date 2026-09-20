@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { DeviceStatus } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { DeviceStatus } from '../shared';
 
 export interface IDeviceDocument extends Document {
   companyId: mongoose.Types.ObjectId;

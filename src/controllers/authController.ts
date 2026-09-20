@@ -1,10 +1,10 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { registerCompany, loginUser, refreshAccessToken } from '../services/authService';
 import { User } from '../models/User';
 import { Company } from '../models/Company';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { logAudit } from '../services/auditService';
-import { AuditAction } from '@highp/shared';
+import { AuditAction } from '../shared';
 
 export const register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {

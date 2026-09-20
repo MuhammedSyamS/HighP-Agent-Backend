@@ -1,27 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { registerCompany, loginUser } from '../src/services/authService';
-import { UserRole, ActivityEventType } from '@highp/shared';
+import { UserRole, ActivityEventType } from '../src/shared';
 import { v4 as uuidv4 } from 'uuid';
+import { setupTestDatabase, teardownTestDatabase } from './testDb';
 
-let mongoServer: MongoMemoryServer;
 let app: any;
 
 let companyAToken: string;
 let companyBToken: string;
 let companyAEmployeeToken: string;
+let companyBEmployeeToken: string;
 let companyAId: string;
 let companyBId: string;
 let companyAEmployeeId: string;
 let companyBEmployeeId: string;
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
-  const uri = mongoServer.getUri();
-  await mongoose.connect(uri);
+  await setupTestDatabase();
   app = createApp();
 
   // 1. Register Company A
@@ -63,7 +60,7 @@ beforeAll(async () => {
   expect(empResA.status).toBe(201);
   companyAEmployeeId = empResA.body.data.profile._id;
 
-  // Login as Charlie
+  // Login as Charlie (Company A Employee)
   const charlieLogin = await loginUser({ email: 'charlie@alpha.com', password: 'Password@123' });
   companyAEmployeeToken = charlieLogin.tokens.accessToken;
 
@@ -83,14 +80,17 @@ beforeAll(async () => {
     });
   expect(empResB.status).toBe(201);
   companyBEmployeeId = empResB.body.data.profile._id;
+
+  // Login as David (Company B Employee)
+  const davidLogin = await loginUser({ email: 'david@bravo.com', password: 'Password@123' });
+  companyBEmployeeToken = davidLogin.tokens.accessToken;
 });
 
 afterAll(async () => {
-  await mongoose.disconnect();
-  await mongoServer.stop();
+  await teardownTestDatabase();
 });
 
-describe('Multi-Tenant Isolation & Security', () => {
+describe('Multi-Tenant Isolation & Cross-Company Security', () => {
   it('Company A should only see Company A employees and never see Company B employees', async () => {
     const res = await request(app)
       .get('/api/employees')
@@ -129,6 +129,68 @@ describe('Multi-Tenant Isolation & Security', () => {
     expect(res.status).toBe(200);
     const empIds = res.body.data.map((r: any) => r.employeeId);
     expect(empIds).not.toContain(companyAEmployeeId);
+  });
+
+  it('Company B cannot see Company A devices', async () => {
+    const res = await request(app)
+      .get('/api/devices')
+      .set('Authorization', `Bearer ${companyBToken}`);
+
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('Role-Based Access Control & Horizontal IDOR Prevention', () => {
+  it('Employee Charlie cannot query Company A aggregated application usage', async () => {
+    const res = await request(app)
+      .get('/api/applications/usage')
+      .set('Authorization', `Bearer ${companyAEmployeeToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('Employee Charlie cannot view another employee (David) timeline', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await request(app)
+      .get(`/api/activity/${companyBEmployeeId}/timeline?date=${today}`)
+      .set('Authorization', `Bearer ${companyAEmployeeToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toContain('Forbidden');
+  });
+
+  it('Employee Charlie can view their own activity timeline', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await request(app)
+      .get(`/api/activity/${companyAEmployeeId}/timeline?date=${today}`)
+      .set('Authorization', `Bearer ${companyAEmployeeToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.employeeId).toBe(companyAEmployeeId);
+  });
+
+  it('Employee Charlie cannot view another employee application usage', async () => {
+    const res = await request(app)
+      .get(`/api/applications/usage/${companyBEmployeeId}`)
+      .set('Authorization', `Bearer ${companyAEmployeeToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('Employee Charlie can view their own application usage', async () => {
+    const res = await request(app)
+      .get(`/api/applications/usage/${companyAEmployeeId}`)
+      .set('Authorization', `Bearer ${companyAEmployeeToken}`);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('Employee Charlie cannot view another employee attendance history', async () => {
+    const res = await request(app)
+      .get(`/api/attendance/${companyBEmployeeId}`)
+      .set('Authorization', `Bearer ${companyAEmployeeToken}`);
+
+    expect(res.status).toBe(403);
   });
 });
 

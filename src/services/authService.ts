@@ -1,5 +1,5 @@
-import jwt from 'jsonwebtoken';
-import { UserRole, UserStatus, SubscriptionTier, SubscriptionStatus } from '@highp/shared';
+﻿import jwt from 'jsonwebtoken';
+import { UserRole, UserStatus, SubscriptionTier, SubscriptionStatus } from '../shared';
 import { config } from '../config';
 import { User, IUserDocument } from '../models/User';
 import { Company, ICompanyDocument } from '../models/Company';
@@ -69,13 +69,13 @@ export const registerCompany = async (data: {
     slug
   });
 
-  // Create Owner User
+  // Create HR Owner User
   const user = new User({
     email: data.email.toLowerCase(),
     passwordHash: data.password,
     firstName: data.firstName,
     lastName: data.lastName,
-    role: UserRole.OWNER,
+    role: UserRole.HR,
     companyId: company._id,
     status: UserStatus.ACTIVE
   });
@@ -90,8 +90,8 @@ export const registerCompany = async (data: {
     companyId: company._id,
     userId: user._id,
     employeeCode: 'EMP-001',
-    department: 'Executive',
-    designation: 'Company Owner / Founder'
+    department: 'Human Resources & People Operations',
+    designation: 'Head of Human Resources (HR)'
   });
 
   user.employeeProfileId = profile._id;

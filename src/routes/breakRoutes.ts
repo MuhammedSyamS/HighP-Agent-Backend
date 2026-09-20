@@ -1,9 +1,9 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { start, end, getBreaks } from '../controllers/breakController';
 import { authenticateUser } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
 import { validate } from '../middleware/validate';
-import { StartBreakSchema, EndBreakSchema } from '@highp/shared';
+import { StartBreakSchema, EndBreakSchema } from '../shared';
 
 const router = Router();
 

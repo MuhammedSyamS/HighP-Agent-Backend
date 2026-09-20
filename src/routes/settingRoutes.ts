@@ -1,9 +1,9 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { getCompany, updateCompanyConfig } from '../controllers/companyController';
 import { authenticateUser, requireRoles } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
 import { validate } from '../middleware/validate';
-import { UpdateCompanyConfigSchema, UserRole } from '@highp/shared';
+import { UpdateCompanyConfigSchema, UserRole } from '../shared';
 
 const router = Router();
 

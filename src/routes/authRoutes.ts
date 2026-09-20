@@ -1,8 +1,8 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { register, signup, login, refresh, getMe, logout } from '../controllers/authController';
 import { validate } from '../middleware/validate';
 import { authenticateUser } from '../middleware/auth';
-import { RegisterCompanySchema, SignupSchema, LoginSchema, RefreshTokenSchema } from '@highp/shared';
+import { RegisterCompanySchema, SignupSchema, LoginSchema, RefreshTokenSchema } from '../shared';
 
 const router = Router();
 

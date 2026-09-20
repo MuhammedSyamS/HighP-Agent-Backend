@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { SubscriptionTier, SubscriptionStatus } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { SubscriptionTier, SubscriptionStatus } from '../shared';
 
 export interface ISubscriptionDocument extends Document {
   companyId: mongoose.Types.ObjectId;

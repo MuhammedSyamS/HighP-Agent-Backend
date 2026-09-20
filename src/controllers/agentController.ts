@@ -1,9 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { Device } from '../models/Device';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { Company } from '../models/Company';
-import { DeviceStatus, ActivityState } from '@highp/shared';
+import { DeviceStatus, ActivityState } from '../shared';
 import { processHeartbeat } from '../services/heartbeatService';
 import { ingestActivityEvents } from '../services/activityService';
 import { startWorkSession, endWorkSession } from '../services/sessionService';

@@ -1,12 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { registerCompany, loginUser } from '../src/services/authService';
-import { UserRole } from '@highp/shared';
+import { UserRole } from '../src/shared';
+import { setupTestDatabase, teardownTestDatabase } from './testDb';
 
-let mongoServer: MongoMemoryServer;
 let app: any;
 
 let adminToken: string;
@@ -16,9 +14,7 @@ let employee1Id: string;
 let employee2Id: string;
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
-  const uri = mongoServer.getUri();
-  await mongoose.connect(uri);
+  await setupTestDatabase();
   app = createApp();
 
   // Register company with Owner/Admin
@@ -71,8 +67,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await mongoose.disconnect();
-  await mongoServer.stop();
+  await teardownTestDatabase();
 });
 
 describe('Authentication & Access Control (RBAC)', () => {

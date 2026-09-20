@@ -1,7 +1,7 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { Company } from '../models/Company';
 import { logAudit } from '../services/auditService';
-import { AuditAction } from '@highp/shared';
+import { AuditAction } from '../shared';
 import { AppError } from '../middleware/errorHandler';
 
 export const getCompany = async (req: Request, res: Response, next: NextFunction): Promise<void> => {

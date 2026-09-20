@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { ActivityEventType } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { ActivityEventType } from '../shared';
 
 export interface IActivityEventDocument extends Document {
   eventId: string;

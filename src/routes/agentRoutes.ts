@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import {
   registerDevice,
   heartbeat,
@@ -11,7 +11,7 @@ import {
 import { authenticateAgent } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
 import { validate } from '../middleware/validate';
-import { AgentRegisterSchema, AgentHeartbeatSchema, AgentSyncSchema } from '@highp/shared';
+import { AgentRegisterSchema, AgentHeartbeatSchema, AgentSyncSchema } from '../shared';
 
 const router = Router();
 

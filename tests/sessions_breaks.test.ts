@@ -1,22 +1,21 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { registerCompany, loginUser } from '../src/services/authService';
-import { UserRole, BreakReason, ActivityState, SessionStatus } from '@highp/shared';
+import { checkStaleSessions } from '../src/services/reaperService';
+import { AttendanceSession } from '../src/models/AttendanceSession';
+import { EmployeeProfile } from '../src/models/EmployeeProfile';
+import { UserRole, BreakReason, ActivityState, SessionStatus } from '../src/shared';
+import { setupTestDatabase, teardownTestDatabase } from './testDb';
 
-let mongoServer: MongoMemoryServer;
 let app: any;
-
 let adminToken: string;
 let employeeToken: string;
 let employeeId: string;
+let companyId: string;
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
-  const uri = mongoServer.getUri();
-  await mongoose.connect(uri);
+  await setupTestDatabase();
   app = createApp();
 
   const res = await registerCompany({
@@ -27,6 +26,7 @@ beforeAll(async () => {
     password: 'Password@123'
   });
   adminToken = res.tokens.accessToken;
+  companyId = res.company.id.toString();
 
   const empRes = await request(app)
     .post('/api/employees')
@@ -48,8 +48,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await mongoose.disconnect();
-  await mongoServer.stop();
+  await teardownTestDatabase();
 });
 
 describe('Work Session & Break Lifecycle', () => {
@@ -128,5 +127,36 @@ describe('Work Session & Break Lifecycle', () => {
     expect(res.body.data.status).toBe(SessionStatus.COMPLETED);
     expect(res.body.data.endedAt).toBeDefined();
   });
-});
 
+  it('should properly terminate abandoned sessions when stale session reaper triggers', async () => {
+    // 1. Employee starts a session
+    const startRes = await request(app)
+      .post('/api/attendance/start')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({});
+
+    expect(startRes.status).toBe(200);
+    const activeSessionId = startRes.body.data._id;
+
+    // 2. Simulate missed heartbeats by backdating lastHeartbeatAt by 5 minutes
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    await EmployeeProfile.updateOne(
+      { _id: employeeId },
+      { $set: { lastHeartbeatAt: fiveMinutesAgo, currentStatus: ActivityState.ACTIVE } }
+    );
+
+    // 3. Trigger reaper check
+    await checkStaleSessions();
+
+    // 4. Verify employee is now OFFLINE and currentSessionId cleared
+    const updatedProfile = await EmployeeProfile.findById(employeeId);
+    expect(updatedProfile?.currentStatus).toBe(ActivityState.OFFLINE);
+    expect(updatedProfile?.currentSessionId).toBeUndefined();
+
+    // 5. Verify the abandoned session was gracefully COMPLETED with reason
+    const closedSession = await AttendanceSession.findById(activeSessionId);
+    expect(closedSession?.status).toBe(SessionStatus.COMPLETED);
+    expect(closedSession?.endReason).toContain('Stale Disconnect');
+    expect(closedSession?.endedAt).toBeDefined();
+  });
+});

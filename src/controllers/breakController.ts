@@ -1,8 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { startBreak, endBreak } from '../services/sessionService';
 import { Break } from '../models/Break';
 import { AppError } from '../middleware/errorHandler';
+import { UserRole } from '../shared';
 
 export const start = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -49,7 +50,12 @@ export const getBreaks = async (req: Request, res: Response, next: NextFunction)
     const { employeeId, sessionId } = req.query;
     const query: any = { companyId: new mongoose.Types.ObjectId(req.companyId) };
 
-    if (employeeId) query.employeeId = new mongoose.Types.ObjectId(employeeId as string);
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      query.employeeId = new mongoose.Types.ObjectId(req.user.employeeProfileId);
+    } else if (employeeId) {
+      query.employeeId = new mongoose.Types.ObjectId(employeeId as string);
+    }
+
     if (sessionId) query.sessionId = new mongoose.Types.ObjectId(sessionId as string);
 
     const breaks = await Break.find(query).sort({ startedAt: -1 }).limit(50).lean();

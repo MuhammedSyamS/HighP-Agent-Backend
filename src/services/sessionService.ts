@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import { SessionStatus, ActivityState, BreakReason } from '@highp/shared';
+﻿import mongoose from 'mongoose';
+import { SessionStatus, ActivityState, BreakReason } from '../shared';
 import { AttendanceSession, IAttendanceSessionDocument } from '../models/AttendanceSession';
 import { Break, IBreakDocument } from '../models/Break';
 import { EmployeeProfile } from '../models/EmployeeProfile';

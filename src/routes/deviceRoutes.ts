@@ -1,8 +1,8 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { getDevices, revokeDevice } from '../controllers/deviceController';
 import { authenticateUser, requireRoles } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
-import { UserRole } from '@highp/shared';
+import { UserRole } from '../shared';
 
 const router = Router();
 

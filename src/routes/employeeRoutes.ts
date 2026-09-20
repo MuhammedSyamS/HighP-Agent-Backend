@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import {
   getEmployees,
   getEmployeeById,
@@ -10,7 +10,7 @@ import {
 import { authenticateUser, requireRoles } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
 import { validate } from '../middleware/validate';
-import { CreateEmployeeSchema, UpdateEmployeeSchema, UserRole } from '@highp/shared';
+import { CreateEmployeeSchema, UpdateEmployeeSchema, UserRole } from '../shared';
 
 const router = Router();
 

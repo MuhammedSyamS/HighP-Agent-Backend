@@ -1,9 +1,9 @@
-import mongoose from 'mongoose';
+﻿import mongoose from 'mongoose';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { User } from '../models/User';
-import { IDailyReportRow, IWeeklyMonthlyReportRow } from '@highp/shared';
+import { IDailyReportRow, IWeeklyMonthlyReportRow } from '../shared';
 
 export const getDailyReport = async (
   companyId: string,

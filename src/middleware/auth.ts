@@ -1,6 +1,6 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { UserRole } from '@highp/shared';
+import { UserRole } from '../shared';
 import { config } from '../config';
 import { User, IUserDocument } from '../models/User';
 import { Device, IDeviceDocument } from '../models/Device';

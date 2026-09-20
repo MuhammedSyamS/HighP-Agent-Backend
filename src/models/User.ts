@@ -1,6 +1,6 @@
-import mongoose, { Schema, Document } from 'mongoose';
+﻿import mongoose, { Schema, Document } from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { UserRole, UserStatus } from '@highp/shared';
+import { UserRole, UserStatus } from '../shared';
 
 export interface IUserDocument extends Document {
   email: string;

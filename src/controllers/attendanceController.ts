@@ -1,9 +1,10 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { startWorkSession, endWorkSession } from '../services/sessionService';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AppError } from '../middleware/errorHandler';
+import { UserRole } from '../shared';
 
 export const startSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -50,7 +51,9 @@ export const getAttendanceSessions = async (req: Request, res: Response, next: N
     const { employeeId, startDate, endDate, limit = '50' } = req.query;
     const query: any = { companyId: new mongoose.Types.ObjectId(req.companyId) };
 
-    if (employeeId) {
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      query.employeeId = new mongoose.Types.ObjectId(req.user.employeeProfileId);
+    } else if (employeeId) {
       query.employeeId = new mongoose.Types.ObjectId(employeeId as string);
     }
 
@@ -78,6 +81,13 @@ export const getAttendanceSessions = async (req: Request, res: Response, next: N
 export const getEmployeeAttendance = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { employeeId } = req.params;
+
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      if (!req.user.employeeProfileId || req.user.employeeProfileId.toString() !== employeeId) {
+        throw new AppError('Forbidden: Employees can only view their own attendance', 403);
+      }
+    }
+
     const sessions = await AttendanceSession.find({
       companyId: new mongoose.Types.ObjectId(req.companyId),
       employeeId: new mongoose.Types.ObjectId(employeeId)

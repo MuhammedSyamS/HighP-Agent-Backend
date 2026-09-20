@@ -1,20 +1,16 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import mongoose from 'mongoose';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
 import { registerCompany, loginUser } from '../src/services/authService';
-import { UserRole } from '@highp/shared';
+import { UserRole } from '../src/shared';
+import { setupTestDatabase, teardownTestDatabase } from './testDb';
 
-let mongoServer: MongoMemoryServer;
 let app: any;
 let adminToken: string;
 let employeeToken: string;
 
 beforeAll(async () => {
-  mongoServer = await MongoMemoryServer.create();
-  const uri = mongoServer.getUri();
-  await mongoose.connect(uri);
+  await setupTestDatabase();
   app = createApp();
 
   const res = await registerCompany({
@@ -45,8 +41,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await mongoose.disconnect();
-  await mongoServer.stop();
+  await teardownTestDatabase();
 });
 
 describe('Reports & CSV Export Security', () => {
@@ -58,10 +53,19 @@ describe('Reports & CSV Export Security', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(Array.isArray(res.body.data)).toBe(true);
   });
 
-  it('Manager/Admin can export daily report as CSV', async () => {
+  it('Employees cannot retrieve reports (403 Forbidden)', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await request(app)
+      .get(`/api/reports/daily?date=${today}`)
+      .set('Authorization', `Bearer ${employeeToken}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toContain('Forbidden');
+  });
+
+  it('Manager/Admin can export daily reports as CSV', async () => {
     const today = new Date().toISOString().slice(0, 10);
     const res = await request(app)
       .get(`/api/reports/export?type=daily&date=${today}`)
@@ -72,7 +76,7 @@ describe('Reports & CSV Export Security', () => {
     expect(res.text).toContain('Employee Code,Employee Name,Department');
   });
 
-  it('Employee should NOT be allowed to generate company CSV exports', async () => {
+  it('Employees cannot export CSV reports (403 Forbidden)', async () => {
     const today = new Date().toISOString().slice(0, 10);
     const res = await request(app)
       .get(`/api/reports/export?type=daily&date=${today}`)

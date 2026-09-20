@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { SessionStatus } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { SessionStatus } from '../shared';
 
 export interface IAttendanceSessionDocument extends Document {
   companyId: mongoose.Types.ObjectId;

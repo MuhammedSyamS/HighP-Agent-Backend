@@ -5,6 +5,7 @@ import { connectDatabase, disconnectDatabase } from './config/database';
 import { initializeSocket } from './realtime/socketManager';
 import { startReaperService, stopReaperService } from './services/reaperService';
 
+// HighP Enterprise Backend Server
 const startServer = async () => {
   try {
     // 1. Connect Database

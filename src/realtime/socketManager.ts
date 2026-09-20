@@ -1,8 +1,8 @@
-import { Server as HttpServer } from 'http';
+﻿import { Server as HttpServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
-import { UserRole, ActivityState } from '@highp/shared';
+import { UserRole, ActivityState } from '../shared';
 
 interface AuthenticatedSocket extends Socket {
   user?: {
@@ -26,6 +26,20 @@ export const initializeSocket = (httpServer: HttpServer): SocketIOServer => {
     pingInterval: 25000,
     pingTimeout: 20000
   });
+
+  // Optional multi-server horizontal scaling via Redis pub/sub
+  if (process.env.REDIS_URL) {
+    try {
+      const { createAdapter } = require('@socket.io/redis-adapter');
+      const { Redis } = require('ioredis');
+      const pubClient = new Redis(process.env.REDIS_URL);
+      const subClient = pubClient.duplicate();
+      io.adapter(createAdapter(pubClient, subClient));
+      console.log('[Socket] Multi-instance Redis adapter configured for horizontal scaling.');
+    } catch (redisErr: any) {
+      console.warn('[Socket] Redis adapter initialization skipped:', redisErr.message);
+    }
+  }
 
   // Socket Authentication Middleware
   io.use((socket: AuthenticatedSocket, next) => {

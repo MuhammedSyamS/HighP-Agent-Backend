@@ -1,7 +1,7 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { Device } from '../models/Device';
-import { DeviceStatus, AuditAction } from '@highp/shared';
+import { DeviceStatus, AuditAction } from '../shared';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
 

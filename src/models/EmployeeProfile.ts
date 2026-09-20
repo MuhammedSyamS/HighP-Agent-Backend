@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { ActivityState } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { ActivityState } from '../shared';
 
 export interface IEmployeeProfileDocument extends Document {
   companyId: mongoose.Types.ObjectId;

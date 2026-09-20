@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import { ActivityEventType, ActivityState } from '@highp/shared';
+﻿import mongoose from 'mongoose';
+import { ActivityEventType, ActivityState } from '../shared';
 import { ActivityEvent, IActivityEventDocument } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Company } from '../models/Company';
@@ -53,7 +53,17 @@ export const ingestActivityEvents = async (
     const category = determineCategory(cleanAppName, categories);
 
     try {
-      // 1. Insert Raw Activity Event (Idempotent by eventId + companyId)
+      // 1. Idempotency check: verify if eventId already processed for this company
+      const existing = await ActivityEvent.findOne({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        eventId: event.eventId
+      });
+      if (existing) {
+        duplicatesCount++;
+        continue;
+      }
+
+      // Insert Raw Activity Event
       await ActivityEvent.create({
         eventId: event.eventId,
         companyId: new mongoose.Types.ObjectId(companyId),

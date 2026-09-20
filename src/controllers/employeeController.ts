@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { User } from '../models/User';
 import { EmployeeProfile } from '../models/EmployeeProfile';
@@ -7,7 +7,7 @@ import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
-import { AuditAction, UserStatus, UserRole, ActivityState, IDashboardOverview } from '@highp/shared';
+import { AuditAction, UserStatus, UserRole, ActivityState, IDashboardOverview } from '../shared';
 
 
 export const getEmployees = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -84,7 +84,10 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     // Fetch active session if any
     let currentSession = null;
     if (profile.currentSessionId) {
-      currentSession = await AttendanceSession.findById(profile.currentSessionId).lean();
+      currentSession = await AttendanceSession.findOne({
+        _id: profile.currentSessionId,
+        companyId: req.companyId
+      }).lean();
     }
 
     // Fetch registered devices

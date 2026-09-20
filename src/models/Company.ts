@@ -1,5 +1,5 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { DEFAULT_APP_CATEGORIES, DEFAULT_HEARTBEAT_INTERVAL_SECONDS, DEFAULT_IDLE_THRESHOLD_MINUTES, DEFAULT_RETENTION_DAYS } from '@highp/shared';
+﻿import mongoose, { Schema, Document } from 'mongoose';
+import { DEFAULT_APP_CATEGORIES, DEFAULT_HEARTBEAT_INTERVAL_SECONDS, DEFAULT_IDLE_THRESHOLD_MINUTES, DEFAULT_RETENTION_DAYS } from '../shared';
 
 export interface ICompanyDocument extends Document {
   name: string;

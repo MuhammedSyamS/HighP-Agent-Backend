@@ -1,0 +1,74 @@
+export enum UserRole {
+  HR = 'HR',
+  OWNER = 'HR',
+  ADMIN = 'HR',
+  MANAGER = 'MANAGER',
+  EMPLOYEE = 'EMPLOYEE'
+}
+
+export enum UserStatus {
+  ACTIVE = 'ACTIVE',
+  INACTIVE = 'INACTIVE',
+  INVITED = 'INVITED',
+  SUSPENDED = 'SUSPENDED'
+}
+
+export enum SessionStatus {
+  ACTIVE = 'ACTIVE',
+  PAUSED = 'PAUSED',
+  COMPLETED = 'COMPLETED',
+  AUTO_TERMINATED = 'AUTO_TERMINATED'
+}
+
+export enum ActivityState {
+  ACTIVE = 'ACTIVE',
+  IDLE = 'IDLE',
+  BREAK = 'BREAK',
+  OFFLINE = 'OFFLINE'
+}
+
+export enum ActivityEventType {
+  APPLICATION_FOCUS = 'APPLICATION_FOCUS',
+  IDLE_INTERVAL = 'IDLE_INTERVAL',
+  SYSTEM_LOCK = 'SYSTEM_LOCK'
+}
+
+export enum BreakReason {
+  LUNCH = 'LUNCH',
+  PERSONAL = 'PERSONAL',
+  MEETING = 'MEETING',
+  COFFEE = 'COFFEE',
+  OTHER = 'OTHER'
+}
+
+export enum DeviceStatus {
+  ACTIVE = 'ACTIVE',
+  REVOKED = 'REVOKED',
+  PENDING = 'PENDING'
+}
+
+export enum SubscriptionTier {
+  TRIAL = 'TRIAL',
+  STARTER = 'STARTER',
+  BUSINESS = 'BUSINESS',
+  ENTERPRISE = 'ENTERPRISE'
+}
+
+export enum SubscriptionStatus {
+  ACTIVE = 'ACTIVE',
+  PAST_DUE = 'PAST_DUE',
+  CANCELED = 'CANCELED',
+  TRIALING = 'TRIALING'
+}
+
+export enum AuditAction {
+  USER_LOGIN = 'USER_LOGIN',
+  USER_LOGOUT = 'USER_LOGOUT',
+  EMPLOYEE_CREATED = 'EMPLOYEE_CREATED',
+  EMPLOYEE_UPDATED = 'EMPLOYEE_UPDATED',
+  EMPLOYEE_DELETED = 'EMPLOYEE_DELETED',
+  DEVICE_REGISTERED = 'DEVICE_REGISTERED',
+  DEVICE_REVOKED = 'DEVICE_REVOKED',
+  CONFIG_UPDATED = 'CONFIG_UPDATED',
+  SESSION_MANUAL_END = 'SESSION_MANUAL_END'
+}

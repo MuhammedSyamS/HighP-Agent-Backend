@@ -1,4 +1,4 @@
-import { ActivityState, SessionStatus } from '@highp/shared';
+﻿import { ActivityState, SessionStatus } from '../shared';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Company } from '../models/Company';
@@ -23,14 +23,47 @@ export const checkStaleSessions = async () => {
       });
 
       for (const employee of staleEmployees) {
+        const disconnectTime = employee.lastHeartbeatAt || new Date();
+
+        // If employee had an open attendance session, gracefully close it at disconnectTime
+        if (employee.currentSessionId) {
+          try {
+            const session = await AttendanceSession.findOne({
+              _id: employee.currentSessionId,
+              companyId: company._id,
+              status: SessionStatus.ACTIVE
+            });
+
+            if (session) {
+              session.endedAt = disconnectTime;
+              session.status = SessionStatus.COMPLETED;
+              session.endReason = 'Stale Disconnect (Heartbeat Timeout)';
+              await session.save();
+
+              emitToCompany(company._id.toString(), 'employee:session_ended', {
+                companyId: company._id.toString(),
+                employeeId: employee._id.toString(),
+                sessionId: session._id.toString(),
+                endedAt: disconnectTime.toISOString(),
+                totalActiveSeconds: session.activeSeconds,
+                endReason: session.endReason
+              });
+            }
+          } catch (sessionErr) {
+            console.error('[ReaperService] Error closing stale session:', sessionErr);
+          }
+          employee.currentSessionId = undefined;
+        }
+
         employee.currentStatus = ActivityState.OFFLINE;
+        employee.currentApplication = '';
         await employee.save();
 
         emitToCompany(company._id.toString(), 'employee:status_changed', {
           companyId: company._id.toString(),
           employeeId: employee._id.toString(),
           status: ActivityState.OFFLINE,
-          currentApplication: employee.currentApplication,
+          currentApplication: '',
           lastActiveAt: employee.lastActiveAt?.toISOString()
         });
       }

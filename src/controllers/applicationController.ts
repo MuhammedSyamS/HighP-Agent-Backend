@@ -1,8 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Company } from '../models/Company';
 import { AppError } from '../middleware/errorHandler';
+import { UserRole } from '../shared';
 
 export const getCompanyApplicationUsage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -63,6 +64,13 @@ export const getCompanyApplicationUsage = async (req: Request, res: Response, ne
 export const getEmployeeApplicationUsage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { employeeId } = req.params;
+
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      if (!req.user.employeeProfileId || req.user.employeeProfileId.toString() !== employeeId) {
+        throw new AppError('Forbidden: Employees can only view their own application usage', 403);
+      }
+    }
+
     const { startDate, endDate, date } = req.query;
     const companyId = new mongoose.Types.ObjectId(req.companyId);
 

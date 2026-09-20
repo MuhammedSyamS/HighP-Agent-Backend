@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import { ActivityState } from '@highp/shared';
+﻿import mongoose from 'mongoose';
+import { ActivityState } from '../shared';
 import { EmployeeProfile, IEmployeeProfileDocument } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Device } from '../models/Device';
