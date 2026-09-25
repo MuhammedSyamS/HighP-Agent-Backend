@@ -31,6 +31,20 @@ export const createApp = (): Express => {
     })
   );
 
+  // Vercel Serverless URL Normalization
+  app.use((req, res, next) => {
+    const original =
+      (req.headers['x-forwarded-uri'] as string) ||
+      (req.headers['x-matched-path'] as string);
+
+    if (original && (req.url === '/src/app' || req.url.startsWith('/src/app'))) {
+      req.url = original;
+    } else if (req.url.startsWith('/src/app')) {
+      req.url = req.url.slice('/src/app'.length) || '/';
+    }
+    next();
+  });
+
   // Serverless DB Connection Check
   app.use(async (req, res, next) => {
     if (mongoose.connection.readyState === 0) {
