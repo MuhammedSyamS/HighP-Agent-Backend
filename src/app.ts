@@ -35,12 +35,15 @@ export const createApp = (): Express => {
   app.use((req, res, next) => {
     const original =
       (req.headers['x-forwarded-uri'] as string) ||
-      (req.headers['x-matched-path'] as string);
+      (req.headers['x-matched-path'] as string) ||
+      (req.headers['x-real-path'] as string);
 
-    if (original && (req.url === '/src/app' || req.url.startsWith('/src/app'))) {
+    if (original && (req.url === '/src/app' || req.url === '/api/index' || req.url.startsWith('/src/app') || req.url.startsWith('/api/index'))) {
       req.url = original;
     } else if (req.url.startsWith('/src/app')) {
       req.url = req.url.slice('/src/app'.length) || '/';
+    } else if (req.url.startsWith('/api/index')) {
+      req.url = req.url.slice('/api/index'.length) || '/';
     }
     next();
   });
@@ -102,8 +105,9 @@ export const createApp = (): Express => {
   app.get('/favicon.ico', (req, res) => res.status(204).end());
   app.get('/favicon.png', (req, res) => res.status(204).end());
 
-  // API Routes
+  // API Routes (mounted at both /api and root / so any rewrite works)
   app.use('/api', routes);
+  app.use('/', routes);
 
   // 404 Handler
   app.use((req, res) => {
