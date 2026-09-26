@@ -1,4 +1,4 @@
-﻿import mongoose from 'mongoose';
+import mongoose from 'mongoose';
 import { SessionStatus, ActivityState, BreakReason } from '../shared';
 import { AttendanceSession, IAttendanceSessionDocument } from '../models/AttendanceSession';
 import { Break, IBreakDocument } from '../models/Break';
@@ -41,6 +41,7 @@ export const startWorkSession = async (
   if (deviceId) profile.currentDeviceId = new mongoose.Types.ObjectId(deviceId);
   profile.currentStatus = ActivityState.ACTIVE;
   profile.lastActiveAt = now;
+  profile.lastHeartbeatAt = now;
   await profile.save();
 
   emitToCompany(companyId, 'employee:session_started', {

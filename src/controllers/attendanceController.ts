@@ -1,10 +1,12 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { startWorkSession, endWorkSession } from '../services/sessionService';
+import { processHeartbeat } from '../services/heartbeatService';
+import { ingestActivityEvents } from '../services/activityService';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AppError } from '../middleware/errorHandler';
-import { UserRole } from '../shared';
+import { UserRole, ActivityState, ActivityEventType } from '../shared';
 
 export const startSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -104,3 +106,75 @@ export const getEmployeeAttendance = async (req: Request, res: Response, next: N
     next(error);
   }
 };
+
+export const attendanceHeartbeat = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const employeeId = req.user?.employeeProfileId;
+    if (!employeeId) {
+      throw new AppError('No employee profile associated with this user account', 400);
+    }
+
+    const { status, currentApplication, recentDurationSeconds = 15, idleSeconds = 0 } = req.body;
+    const profile = await EmployeeProfile.findOne({
+      _id: new mongoose.Types.ObjectId(employeeId),
+      companyId: new mongoose.Types.ObjectId(req.companyId)
+    });
+
+    if (!profile) {
+      throw new AppError('Employee profile not found', 404);
+    }
+
+    const sessionId = profile.currentSessionId ? profile.currentSessionId.toString() : undefined;
+    const now = new Date();
+    const effectiveStatus = (status as ActivityState) || (profile.currentStatus as ActivityState) || ActivityState.ACTIVE;
+    const effectiveApp = currentApplication || profile.currentApplication || 'HighP Web Workspace';
+
+    const result = await processHeartbeat({
+      companyId: req.companyId!,
+      employeeId,
+      sessionId,
+      timestamp: now.toISOString(),
+      status: effectiveStatus,
+      currentApplication: effectiveApp,
+      idleSeconds: Number(idleSeconds) || 0,
+      recentDurationSeconds: Number(recentDurationSeconds) || 0,
+      ipAddress: req.ip
+    });
+
+    // Ingest activity event so timeline visualizer and app usage get updated
+    if (effectiveStatus === ActivityState.ACTIVE && Number(recentDurationSeconds) > 0 && sessionId) {
+      const dur = Number(recentDurationSeconds);
+      const eventStart = new Date(now.getTime() - dur * 1000);
+      try {
+        await ingestActivityEvents(
+          req.companyId!,
+          employeeId,
+          sessionId,
+          undefined,
+          [
+            {
+              eventId: `web-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              type: ActivityEventType.APPLICATION_FOCUS,
+              applicationName: effectiveApp,
+              processName: 'browser',
+              windowTitleSanitized: effectiveApp,
+              startedAt: eventStart.toISOString(),
+              endedAt: now.toISOString(),
+              durationSeconds: dur
+            }
+          ]
+        );
+      } catch (err) {
+        console.error('[Web Heartbeat] Event ingestion warning:', err);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

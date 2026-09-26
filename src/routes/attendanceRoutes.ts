@@ -3,7 +3,8 @@ import {
   startSession,
   endSession,
   getAttendanceSessions,
-  getEmployeeAttendance
+  getEmployeeAttendance,
+  attendanceHeartbeat
 } from '../controllers/attendanceController';
 import { authenticateUser } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
@@ -15,6 +16,7 @@ router.use(enforceTenant);
 
 router.post('/start', startSession);
 router.post('/end', endSession);
+router.post('/heartbeat', attendanceHeartbeat);
 router.get('/', getAttendanceSessions);
 router.get('/:employeeId', getEmployeeAttendance);
 
