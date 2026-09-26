@@ -1,9 +1,11 @@
-﻿import mongoose from 'mongoose';
-import { ActivityEventType, ActivityState } from '../shared';
+import mongoose from 'mongoose';
+import { ActivityEventType, ActivityState, SessionStatus } from '../shared';
 import { ActivityEvent, IActivityEventDocument } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Company } from '../models/Company';
 import { EmployeeProfile } from '../models/EmployeeProfile';
+import { AttendanceSession } from '../models/AttendanceSession';
+import { Device } from '../models/Device';
 import { emitToCompany } from '../realtime/socketManager';
 
 export interface IngestEventInput {
@@ -41,6 +43,37 @@ export const ingestActivityEvents = async (
   const company = await Company.findById(companyId);
   const categories = company?.config?.appCategories || [];
 
+  // Resolve device ObjectId if a string identifier was provided
+  let resolvedDeviceId: mongoose.Types.ObjectId | undefined;
+  if (deviceId) {
+    if (typeof deviceId === 'string' && /^[0-9a-fA-F]{24}$/.test(deviceId)) {
+      resolvedDeviceId = new mongoose.Types.ObjectId(deviceId);
+    } else {
+      const dev = await Device.findOne({ companyId, deviceId });
+      if (dev) resolvedDeviceId = dev._id as mongoose.Types.ObjectId;
+    }
+  }
+
+  // Resolve session ObjectId
+  let resolvedSessionId: mongoose.Types.ObjectId | undefined;
+  if (sessionId && typeof sessionId === 'string' && /^[0-9a-fA-F]{24}$/.test(sessionId)) {
+    resolvedSessionId = new mongoose.Types.ObjectId(sessionId);
+  } else {
+    const profile = await EmployeeProfile.findById(employeeId);
+    if (profile?.currentSessionId) {
+      resolvedSessionId = profile.currentSessionId;
+    } else {
+      const activeSession = await AttendanceSession.findOne({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        employeeId: new mongoose.Types.ObjectId(employeeId),
+        status: SessionStatus.ACTIVE
+      });
+      if (activeSession) {
+        resolvedSessionId = activeSession._id as mongoose.Types.ObjectId;
+      }
+    }
+  }
+
   let ingestedCount = 0;
   let duplicatesCount = 0;
 
@@ -63,13 +96,24 @@ export const ingestActivityEvents = async (
         continue;
       }
 
+      // If still no session, create one fallback session
+      if (!resolvedSessionId) {
+        const fallbackSession = await AttendanceSession.create({
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: new mongoose.Types.ObjectId(employeeId),
+          startedAt: started,
+          status: SessionStatus.ACTIVE
+        });
+        resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
+      }
+
       // Insert Raw Activity Event
       await ActivityEvent.create({
         eventId: event.eventId,
         companyId: new mongoose.Types.ObjectId(companyId),
         employeeId: new mongoose.Types.ObjectId(employeeId),
-        sessionId: new mongoose.Types.ObjectId(sessionId),
-        ...(deviceId && mongoose.Types.ObjectId.isValid(deviceId) ? { deviceId: new mongoose.Types.ObjectId(deviceId) } : {}),
+        sessionId: resolvedSessionId,
+        ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
         type: event.type,
         applicationName: cleanAppName,
         processName: event.processName,

@@ -126,8 +126,10 @@ export const attendanceHeartbeat = async (req: Request, res: Response, next: Nex
 
     const sessionId = profile.currentSessionId ? profile.currentSessionId.toString() : undefined;
     const now = new Date();
-    const effectiveStatus = (status as ActivityState) || (profile.currentStatus as ActivityState) || ActivityState.ACTIVE;
-    const effectiveApp = currentApplication || profile.currentApplication || 'HighP Web Workspace';
+    let effectiveApp = (currentApplication || profile.currentApplication || 'HighP Web Workspace').trim();
+    if (effectiveApp.includes('•') || effectiveApp.includes('Internal Workforce') || effectiveApp.length > 30) {
+      effectiveApp = 'HighP Web Workspace';
+    }
 
     const result = await processHeartbeat({
       companyId: req.companyId!,

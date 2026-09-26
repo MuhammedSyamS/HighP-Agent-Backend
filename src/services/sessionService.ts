@@ -3,6 +3,7 @@ import { SessionStatus, ActivityState, BreakReason } from '../shared';
 import { AttendanceSession, IAttendanceSessionDocument } from '../models/AttendanceSession';
 import { Break, IBreakDocument } from '../models/Break';
 import { EmployeeProfile } from '../models/EmployeeProfile';
+import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { emitToCompany, emitToEmployee } from '../realtime/socketManager';
 
@@ -28,17 +29,27 @@ export const startWorkSession = async (
     }
   }
 
+  let resolvedDeviceId: mongoose.Types.ObjectId | undefined;
+  if (deviceId) {
+    if (typeof deviceId === 'string' && /^[0-9a-fA-F]{24}$/.test(deviceId)) {
+      resolvedDeviceId = new mongoose.Types.ObjectId(deviceId);
+    } else {
+      const devDoc = await Device.findOne({ companyId, deviceId });
+      if (devDoc) resolvedDeviceId = devDoc._id as mongoose.Types.ObjectId;
+    }
+  }
+
   const now = new Date();
   const session = await AttendanceSession.create({
     companyId: new mongoose.Types.ObjectId(companyId),
     employeeId: new mongoose.Types.ObjectId(employeeId),
-    ...(deviceId && { deviceId: new mongoose.Types.ObjectId(deviceId) }),
+    ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
     startedAt: now,
     status: SessionStatus.ACTIVE
   });
 
   profile.currentSessionId = session._id;
-  if (deviceId) profile.currentDeviceId = new mongoose.Types.ObjectId(deviceId);
+  if (resolvedDeviceId) profile.currentDeviceId = resolvedDeviceId;
   profile.currentStatus = ActivityState.ACTIVE;
   profile.lastActiveAt = now;
   profile.lastHeartbeatAt = now;

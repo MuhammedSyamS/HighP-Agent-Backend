@@ -1,4 +1,4 @@
-﻿import mongoose from 'mongoose';
+import mongoose from 'mongoose';
 import { ActivityState } from '../shared';
 import { EmployeeProfile, IEmployeeProfileDocument } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
@@ -100,19 +100,17 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     );
   }
 
-  // Real-time broadcast if status or application changed
-  if (previousStatus !== status || previousApp !== currentApplication) {
-    emitToCompany(companyId, 'employee:status_changed', {
-      companyId,
-      employeeId: profile._id.toString(),
-      status: profile.currentStatus,
-      currentApplication: profile.currentApplication,
-      lastActiveAt: profile.lastActiveAt?.toISOString(),
-      todayActiveSeconds: profile.todayActiveSeconds,
-      todayIdleSeconds: profile.todayIdleSeconds,
-      todayBreakSeconds: profile.todayBreakSeconds
-    });
-  }
+  // Real-time broadcast so HR dashboard receives live active/idle counters
+  emitToCompany(companyId, 'employee:status_changed', {
+    companyId,
+    employeeId: profile._id.toString(),
+    status: profile.currentStatus,
+    currentApplication: profile.currentApplication,
+    lastActiveAt: profile.lastActiveAt?.toISOString(),
+    todayActiveSeconds: profile.todayActiveSeconds,
+    todayIdleSeconds: profile.todayIdleSeconds,
+    todayBreakSeconds: profile.todayBreakSeconds
+  });
 
   return {
     success: true,

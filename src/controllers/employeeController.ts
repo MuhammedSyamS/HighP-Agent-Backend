@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { User } from '../models/User';
 import { EmployeeProfile } from '../models/EmployeeProfile';
@@ -30,11 +30,13 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       .sort({ createdAt: -1 })
       .lean();
 
+    // Only include profiles with an existing user record
+    let results = profiles.filter((p: any) => p.userId != null);
+
     // Filter by search term if provided
-    let results = profiles;
     if (search && typeof search === 'string') {
       const term = search.toLowerCase();
-      results = profiles.filter((p: any) => {
+      results = results.filter((p: any) => {
         const user = p.userId;
         const fullName = `${user?.firstName || ''} ${user?.lastName || ''}`.toLowerCase();
         const code = (p.employeeCode || '').toLowerCase();
@@ -269,7 +271,8 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
   try {
     const companyId = new mongoose.Types.ObjectId(req.companyId);
 
-    const profiles = await EmployeeProfile.find({ companyId }).lean();
+    const rawProfiles = await EmployeeProfile.find({ companyId }).populate('userId', '_id status').lean();
+    const profiles = rawProfiles.filter((p: any) => p.userId != null);
     const totalEmployees = profiles.length;
 
     let activeNow = 0;
