@@ -73,25 +73,45 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
       .populate('userId', 'firstName lastName email')
       .lean();
 
+    const todayStr = new Date().toISOString().slice(0, 10);
     const liveItems: any[] = [];
     for (const emp of activeEmployees as any[]) {
       const cleanApp = (emp.currentApplication || '').trim();
-      const hasRecentMatch = events.some(
+      if (!cleanApp) continue;
+
+      const existingMatch = events.find(
         (e: any) =>
           e.employeeId?._id?.toString() === emp._id.toString() &&
           e.applicationName?.toLowerCase() === cleanApp.toLowerCase() &&
-          Date.now() - new Date(e.endedAt || e.startedAt).getTime() < 60000
+          Date.now() - new Date(e.endedAt || e.startedAt).getTime() < 180000
       );
 
-      if (!hasRecentMatch && cleanApp) {
+      const usageDoc = await mongoose.model('ApplicationUsage').findOne({
+        companyId: new mongoose.Types.ObjectId(req.companyId),
+        employeeId: emp._id,
+        date: todayStr,
+        applicationName: cleanApp
+      }).lean() as any;
+
+      if (existingMatch) {
+        existingMatch.isLiveNow = true;
+        if (usageDoc?.totalSeconds && usageDoc.totalSeconds > existingMatch.durationSeconds) {
+          existingMatch.todayTotalSeconds = usageDoc.totalSeconds;
+        }
+      } else {
+        const elapsedSec = emp.lastActiveAt
+          ? Math.max(5, Math.round((Date.now() - new Date(emp.lastActiveAt).getTime()) / 1000))
+          : 15;
+
         liveItems.push({
           _id: `live-${emp._id}`,
           eventId: `live-${emp._id}`,
           type: 'APPLICATION_FOCUS',
           applicationName: cleanApp,
-          startedAt: emp.lastActiveAt || new Date(),
+          startedAt: emp.lastActiveAt ? new Date(emp.lastActiveAt) : new Date(Date.now() - elapsedSec * 1000),
           endedAt: new Date(),
-          durationSeconds: 15,
+          durationSeconds: usageDoc?.totalSeconds || elapsedSec,
+          todayTotalSeconds: usageDoc?.totalSeconds,
           isLiveNow: true,
           employeeId: {
             _id: emp._id,

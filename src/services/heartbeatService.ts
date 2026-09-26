@@ -141,8 +141,31 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
 
   await profile.save();
 
+  // Ensure active session linkage if employee is actively working
+  if (profile.currentStatus === ActivityState.ACTIVE && !profile.currentSessionId) {
+    let activeSession = await AttendanceSession.findOne({
+      companyId,
+      employeeId: profile._id,
+      endedAt: { $exists: false }
+    }).sort({ startedAt: -1 });
+
+    if (!activeSession) {
+      activeSession = await AttendanceSession.create({
+        companyId,
+        employeeId: profile._id,
+        startedAt: now,
+        lastHeartbeatAt: now,
+        source: isDesktop ? 'DESKTOP' : 'WEB',
+        activeSeconds: durationSec > 0 ? durationSec : 0
+      });
+    }
+    profile.currentSessionId = activeSession._id as mongoose.Types.ObjectId;
+    await profile.save();
+  }
+
   // Create or coalesce real ActivityEvent and ApplicationUsage for live timeline & recent activity feed
-  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE && durationSec > 0 && profile.currentSessionId) {
+  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE && profile.currentSessionId) {
+    const effectiveSec = Math.max(1, durationSec);
     try {
       const lastEvent = await ActivityEvent.findOne({
         companyId: new mongoose.Types.ObjectId(companyId),
@@ -154,7 +177,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       const gapMs = lastEvent ? Math.abs(now.getTime() - lastEvent.endedAt.getTime()) : Infinity;
       if (lastEvent && lastEvent.applicationName.toLowerCase() === cleanApp.toLowerCase() && gapMs <= 120000) {
         lastEvent.endedAt = now;
-        lastEvent.durationSeconds += durationSec;
+        lastEvent.durationSeconds += effectiveSec;
         await lastEvent.save();
       } else {
         await ActivityEvent.create({
@@ -166,9 +189,9 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
           type: ActivityEventType.APPLICATION_FOCUS,
           applicationName: cleanApp,
           windowTitleSanitized: cleanApp,
-          startedAt: new Date(now.getTime() - durationSec * 1000),
+          startedAt: new Date(now.getTime() - effectiveSec * 1000),
           endedAt: now,
-          durationSeconds: durationSec
+          durationSeconds: effectiveSec
         });
       }
 
@@ -180,7 +203,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
           applicationName: cleanApp
         },
         {
-          $inc: { totalSeconds: durationSec },
+          $inc: { totalSeconds: effectiveSec },
           $set: { lastUsedAt: now }
         },
         { upsert: true }
