@@ -74,8 +74,9 @@ export const ingestActivityEvents = async (
     }
   }
 
-  let ingestedCount = 0;
-  let duplicatesCount = 0;
+  const accepted: string[] = [];
+  const duplicates: string[] = [];
+  const failed: Array<{ eventId: string; error: string }> = [];
 
   for (const event of events) {
     const started = new Date(event.startedAt);
@@ -92,7 +93,7 @@ export const ingestActivityEvents = async (
         eventId: event.eventId
       });
       if (existing) {
-        duplicatesCount++;
+        duplicates.push(event.eventId);
         continue;
       }
 
@@ -140,13 +141,13 @@ export const ingestActivityEvents = async (
         );
       }
 
-      ingestedCount++;
+      accepted.push(event.eventId);
     } catch (err: any) {
       if (err.code === 11000) {
-        // Duplicate eventId already processed
-        duplicatesCount++;
+        duplicates.push(event.eventId);
       } else {
         console.error('[ActivityService] Error ingesting event:', err);
+        failed.push({ eventId: event.eventId, error: err.message || 'Ingestion error' });
       }
     }
   }
@@ -169,7 +170,24 @@ export const ingestActivityEvents = async (
     }
   }
 
-  return { ingestedCount, duplicatesCount };
+  // Synchronize derived daily totals if any new events were accepted
+  if (accepted.length > 0) {
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const { rebuildEmployeeDay } = await import('./rebuildService');
+      await rebuildEmployeeDay(companyId, employeeId, todayStr);
+    } catch (rebuildErr) {
+      console.warn('[ActivityService] Background day rebuild warning:', rebuildErr);
+    }
+  }
+
+  return {
+    accepted,
+    duplicates,
+    failed,
+    ingestedCount: accepted.length,
+    duplicatesCount: duplicates.length
+  };
 };
 
 export const getEmployeeTimeline = async (

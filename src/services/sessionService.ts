@@ -6,6 +6,7 @@ import { EmployeeProfile } from '../models/EmployeeProfile';
 import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { emitToCompany, emitToEmployee } from '../realtime/socketManager';
+import { rebuildEmployeeDay } from './rebuildService';
 
 export const startWorkSession = async (
   companyId: string,
@@ -119,6 +120,13 @@ export const endWorkSession = async (
   session.endReason = endReason;
   await session.save();
 
+  try {
+    const todayStr = now.toISOString().slice(0, 10);
+    await rebuildEmployeeDay(companyId, profile._id.toString(), todayStr);
+  } catch (rebuildErr) {
+    console.error('[SessionService] Rebuild error on session end:', rebuildErr);
+  }
+
   profile.currentSessionId = undefined;
   profile.currentStatus = ActivityState.OFFLINE;
   profile.currentApplication = '';
@@ -158,7 +166,7 @@ export const startBreak = async (
     throw new AppError('Cannot start break without an active work session.', 400);
   }
 
-  // Check if already on break
+  // Check if already on break - return existing for idempotency
   const existingBreak = await Break.findOne({
     companyId,
     employeeId,
@@ -167,7 +175,7 @@ export const startBreak = async (
   });
 
   if (existingBreak) {
-    throw new AppError('A break is already in progress.', 400);
+    return existingBreak;
   }
 
   const now = new Date();

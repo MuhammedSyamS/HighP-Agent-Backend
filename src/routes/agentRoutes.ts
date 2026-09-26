@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import {
   registerDevice,
   heartbeat,
@@ -6,7 +6,8 @@ import {
   syncOfflineEvents,
   getAgentConfig,
   startAgentSession,
-  endAgentSession
+  endAgentSession,
+  getAgentHealth
 } from '../controllers/agentController';
 import { authenticateAgent } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
@@ -18,6 +19,7 @@ const router = Router();
 router.use(authenticateAgent);
 router.use(enforceTenant);
 
+router.get('/health', getAgentHealth);
 router.post('/register', validate(AgentRegisterSchema), registerDevice);
 router.post('/heartbeat', validate(AgentHeartbeatSchema), heartbeat);
 router.post('/activity', recordActivity);

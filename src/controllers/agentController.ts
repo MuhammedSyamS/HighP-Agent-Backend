@@ -1,8 +1,9 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { Device } from '../models/Device';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { Company } from '../models/Company';
+import { ActivityEvent } from '../models/ActivityEvent';
 import { DeviceStatus, ActivityState } from '../shared';
 import { processHeartbeat } from '../services/heartbeatService';
 import { ingestActivityEvents } from '../services/activityService';
@@ -201,6 +202,73 @@ export const endAgentSession = async (req: Request, res: Response, next: NextFun
     res.status(200).json({
       success: true,
       data: session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAgentHealth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const employeeId = req.user?.employeeProfileId;
+    if (!employeeId) {
+      throw new AppError('No employee profile found', 400);
+    }
+
+    const profile = await EmployeeProfile.findOne({
+      _id: new mongoose.Types.ObjectId(employeeId),
+      companyId: new mongoose.Types.ObjectId(req.companyId)
+    }).lean();
+
+    if (!profile) {
+      throw new AppError('Employee profile not found', 404);
+    }
+
+    const device = profile.currentDeviceId
+      ? await Device.findById(profile.currentDeviceId).lean()
+      : null;
+
+    const lastEvent = await ActivityEvent.findOne({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId)
+    })
+      .sort({ startedAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        serverConnectivity: 'HEALTHY',
+        serverTimestamp: new Date().toISOString(),
+        agent: {
+          employeeId: profile._id,
+          employeeCode: profile.employeeCode,
+          currentStatus: profile.currentStatus,
+          currentApplication: profile.currentApplication,
+          lastHeartbeat: profile.lastHeartbeatAt,
+          currentSession: profile.currentSessionId
+        },
+        device: device
+          ? {
+              id: device._id,
+              deviceId: device.deviceId,
+              deviceName: device.deviceName,
+              status: device.status,
+              lastHeartbeat: device.lastHeartbeatAt,
+              platform: device.osInfo?.platform
+            }
+          : null,
+        lastEvent: lastEvent
+          ? {
+              eventId: lastEvent.eventId,
+              type: lastEvent.type,
+              applicationName: lastEvent.applicationName,
+              durationSeconds: lastEvent.durationSeconds,
+              startedAt: lastEvent.startedAt,
+              endedAt: lastEvent.endedAt
+            }
+          : null
+      }
     });
   } catch (error) {
     next(error);

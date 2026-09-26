@@ -53,36 +53,39 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     profile.lastDateReset = todayStr;
   }
 
-  const previousStatus = profile.currentStatus;
-  const previousApp = profile.currentApplication;
+  // Check desktop priority: if web heartbeat arrives while desktop agent is actively sending telemetry (<60s),
+  // preserve desktop agent as the authoritative workstation activity source.
+  const isDesktop = !!deviceId;
+  const isDesktopActive =
+    !isDesktop &&
+    profile.currentDeviceId &&
+    profile.lastHeartbeatAt &&
+    now.getTime() - profile.lastHeartbeatAt.getTime() < 60000;
 
-  profile.currentStatus = status;
-  profile.currentApplication = currentApplication || profile.currentApplication;
-  profile.lastHeartbeatAt = now;
-
-  if (status === ActivityState.ACTIVE) {
-    profile.lastActiveAt = now;
-    profile.todayActiveSeconds += recentDurationSeconds;
-  } else if (status === ActivityState.IDLE) {
-    profile.todayIdleSeconds += recentDurationSeconds;
-  } else if (status === ActivityState.BREAK) {
-    profile.todayBreakSeconds += recentDurationSeconds;
+  if (isDesktop) {
+    // Desktop agent is authoritative
+    profile.currentStatus = status;
+    if (currentApplication) {
+      profile.currentApplication = currentApplication;
+    }
+    profile.lastHeartbeatAt = now;
+    if (status === ActivityState.ACTIVE) {
+      profile.lastActiveAt = now;
+    }
+  } else if (!isDesktopActive) {
+    // Web presence is allowed only when desktop agent is not actively connected
+    profile.currentStatus = status;
+    profile.currentApplication = currentApplication || 'HighP Web Workspace';
+    profile.lastHeartbeatAt = now;
+    if (status === ActivityState.ACTIVE) {
+      profile.lastActiveAt = now;
+    }
+  } else {
+    // Desktop is active; web heartbeat is purely web presence keepalive, ignore app/status override
   }
 
   if (sessionId && mongoose.Types.ObjectId.isValid(sessionId)) {
     profile.currentSessionId = new mongoose.Types.ObjectId(sessionId);
-    // Update active attendance session counters
-    if (recentDurationSeconds > 0) {
-      const updateFields: any = {};
-      if (status === ActivityState.ACTIVE) updateFields.activeSeconds = recentDurationSeconds;
-      if (status === ActivityState.IDLE) updateFields.idleSeconds = recentDurationSeconds;
-      if (status === ActivityState.BREAK) updateFields.breakSeconds = recentDurationSeconds;
-
-      await AttendanceSession.updateOne(
-        { _id: sessionId, companyId },
-        { $inc: updateFields }
-      );
-    }
   }
 
   await profile.save();
@@ -100,7 +103,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     );
   }
 
-  // Real-time broadcast so HR dashboard receives live active/idle counters
+  // Real-time broadcast with authoritative current state
   emitToCompany(companyId, 'employee:status_changed', {
     companyId,
     employeeId: profile._id.toString(),
@@ -109,7 +112,8 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     lastActiveAt: profile.lastActiveAt?.toISOString(),
     todayActiveSeconds: profile.todayActiveSeconds,
     todayIdleSeconds: profile.todayIdleSeconds,
-    todayBreakSeconds: profile.todayBreakSeconds
+    todayBreakSeconds: profile.todayBreakSeconds,
+    source: isDesktop ? 'DESKTOP' : isDesktopActive ? 'DESKTOP' : 'WEB'
   });
 
   return {

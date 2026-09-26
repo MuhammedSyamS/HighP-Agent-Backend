@@ -131,6 +131,8 @@ export const attendanceHeartbeat = async (req: Request, res: Response, next: Nex
       effectiveApp = 'HighP Web Workspace';
     }
 
+    const effectiveStatus = status || profile.currentStatus || ActivityState.ACTIVE;
+
     const result = await processHeartbeat({
       companyId: req.companyId!,
       employeeId,
