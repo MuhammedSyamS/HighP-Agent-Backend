@@ -1,4 +1,4 @@
-﻿import jwt from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 import { UserRole, UserStatus, SubscriptionTier, SubscriptionStatus } from '../shared';
 import { config } from '../config';
 import { User, IUserDocument } from '../models/User';
@@ -207,10 +207,26 @@ export const registerEmployee = async (data: {
 };
 
 export const loginUser = async (data: { email: string; password: string }) => {
-  const email = (data.email || '').toLowerCase().trim();
-  const user = await User.findOne({ email }).select('+passwordHash +refreshToken');
+  const rawEmail = (data.email || '').toLowerCase().trim();
+  
+  // 1. Direct match by exact email
+  let user: any = await User.findOne({ email: rawEmail }).select('+passwordHash +refreshToken');
+
+  // 2. If not found, resolve aliases (e.g., admin, hr, shamsaifudheen, highphaus)
   if (!user) {
-    throw new AppError('Invalid email or password.', 401);
+    if (rawEmail === 'admin' || rawEmail === 'hr' || rawEmail.includes('sham')) {
+      user = await User.findOne({ email: 'shamsaifudheen@gmail.com' }).select('+passwordHash +refreshToken')
+        || await User.findOne({ role: UserRole.HR }).select('+passwordHash +refreshToken');
+    } else if (rawEmail === 'employee' || rawEmail.includes('highp')) {
+      user = await User.findOne({ email: 'highphaus@gmail.com' }).select('+passwordHash +refreshToken')
+        || await User.findOne({ role: UserRole.EMPLOYEE }).select('+passwordHash +refreshToken');
+    } else if (!rawEmail.includes('@')) {
+      user = await User.findOne({ email: new RegExp('^' + rawEmail, 'i') }).select('+passwordHash +refreshToken');
+    }
+  }
+
+  if (!user) {
+    throw new AppError('Invalid email or password. Please verify your credentials.', 401);
   }
 
   if (user.status === UserStatus.SUSPENDED || user.status === UserStatus.INACTIVE) {
@@ -219,7 +235,7 @@ export const loginUser = async (data: { email: string; password: string }) => {
 
   const isMatch = await user.comparePassword(data.password);
   if (!isMatch) {
-    throw new AppError('Invalid email or password.', 401);
+    throw new AppError('Invalid email or password. Please verify your credentials.', 401);
   }
 
   const company = await Company.findById(user.companyId);
