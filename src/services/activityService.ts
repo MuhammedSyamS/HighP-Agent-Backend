@@ -108,21 +108,57 @@ export const ingestActivityEvents = async (
         resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
       }
 
-      // Insert Raw Activity Event
-      await ActivityEvent.create({
-        eventId: event.eventId,
+      // Filter out self-monitoring / internal agent spam events
+      const lowerApp = cleanAppName.toLowerCase();
+      if (
+        lowerApp.includes('highp') ||
+        lowerApp.includes('internal workforce') ||
+        lowerApp.includes('highphaus') ||
+        lowerApp === 'electron' ||
+        lowerApp === 'electron.exe' ||
+        lowerApp === 'unknown' ||
+        lowerApp === 'unknown application'
+      ) {
+        // Skip inserting or counting self/unknown agent activity as a tracked application
+        accepted.push(event.eventId);
+        continue;
+      }
+
+      // Check if previous event in the same session is the exact same application and continuous (gap <= 120s)
+      const lastSessionEvent = await ActivityEvent.findOne({
         companyId: new mongoose.Types.ObjectId(companyId),
         employeeId: new mongoose.Types.ObjectId(employeeId),
         sessionId: resolvedSessionId,
-        ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
-        type: event.type,
-        applicationName: cleanAppName,
-        processName: event.processName,
-        windowTitleSanitized: event.windowTitleSanitized,
-        startedAt: started,
-        endedAt: ended,
-        durationSeconds: duration
-      });
+        type: event.type
+      }).sort({ startedAt: -1 });
+
+      const isContinuous =
+        lastSessionEvent &&
+        lastSessionEvent.applicationName.trim().toLowerCase() === cleanAppName.trim().toLowerCase() &&
+        Math.abs(started.getTime() - lastSessionEvent.endedAt.getTime()) <= 120000;
+
+      if (isContinuous) {
+        // Coalesce into existing interval: increase its time and extend endedAt!
+        lastSessionEvent.endedAt = ended > lastSessionEvent.endedAt ? ended : lastSessionEvent.endedAt;
+        lastSessionEvent.durationSeconds += duration;
+        await lastSessionEvent.save();
+      } else {
+        // Insert new distinct activity interval
+        await ActivityEvent.create({
+          eventId: event.eventId,
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: new mongoose.Types.ObjectId(employeeId),
+          sessionId: resolvedSessionId,
+          ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
+          type: event.type,
+          applicationName: cleanAppName,
+          processName: event.processName,
+          windowTitleSanitized: event.windowTitleSanitized,
+          startedAt: started,
+          endedAt: ended,
+          durationSeconds: duration
+        });
+      }
 
       // 2. Aggregate into Daily Application Usage
       if (event.type === ActivityEventType.APPLICATION_FOCUS && duration > 0) {
@@ -152,10 +188,21 @@ export const ingestActivityEvents = async (
     }
   }
 
-  // Update employee profile's current app if recent event
+  // Update employee profile's current app if recent event (and not HighP agent)
   if (events.length > 0) {
-    const latestEvent = events[events.length - 1];
-    if (latestEvent.applicationName) {
+    const validEvents = events.filter((e) => {
+      const a = (e.applicationName || '').toLowerCase();
+      return (
+        a &&
+        !a.includes('highp') &&
+        !a.includes('internal workforce') &&
+        !a.includes('highphaus') &&
+        !a.includes('electron')
+      );
+    });
+
+    if (validEvents.length > 0) {
+      const latestEvent = validEvents[validEvents.length - 1];
       await EmployeeProfile.updateOne(
         { _id: employeeId, companyId },
         { $set: { currentApplication: latestEvent.applicationName } }
@@ -201,10 +248,38 @@ export const getEmployeeTimeline = async (
   const events = await ActivityEvent.find({
     companyId: new mongoose.Types.ObjectId(companyId),
     employeeId: new mongoose.Types.ObjectId(employeeId),
-    startedAt: { $gte: startOfDay, $lte: endOfDay }
+    startedAt: { $gte: startOfDay, $lte: endOfDay },
+    applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
   })
     .sort({ startedAt: 1 })
     .lean();
 
-  return events;
+  // Consolidate consecutive events with the same app and event type into a single chronological block
+  // so the timeline shows ONE card per application interval with increasing duration
+  const consolidated: any[] = [];
+  for (const evt of events) {
+    if (consolidated.length === 0) {
+      consolidated.push({ ...evt });
+      continue;
+    }
+
+    const prev = consolidated[consolidated.length - 1];
+    const prevEnd = new Date(prev.endedAt).getTime();
+    const currStart = new Date(evt.startedAt).getTime();
+    const isSameApp =
+      (prev.applicationName || '').trim().toLowerCase() === (evt.applicationName || '').trim().toLowerCase();
+    const isSameType = prev.type === evt.type;
+    const isAdjacent = Math.abs(currStart - prevEnd) <= 120000; // gap <= 2 minutes
+
+    if (isSameApp && isSameType && isAdjacent) {
+      prev.durationSeconds += evt.durationSeconds;
+      if (new Date(evt.endedAt) > new Date(prev.endedAt)) {
+        prev.endedAt = evt.endedAt;
+      }
+    } else {
+      consolidated.push({ ...evt });
+    }
+  }
+
+  return consolidated;
 };

@@ -126,9 +126,15 @@ export const attendanceHeartbeat = async (req: Request, res: Response, next: Nex
 
     const sessionId = profile.currentSessionId ? profile.currentSessionId.toString() : undefined;
     const now = new Date();
-    let effectiveApp = (currentApplication || profile.currentApplication || 'HighP Web Workspace').trim();
-    if (effectiveApp.includes('•') || effectiveApp.includes('Internal Workforce') || effectiveApp.length > 30) {
-      effectiveApp = 'HighP Web Workspace';
+    let effectiveApp = currentApplication ? currentApplication.trim() : profile.currentApplication;
+    if (
+      effectiveApp &&
+      (effectiveApp.includes('•') ||
+        effectiveApp.includes('Internal Workforce') ||
+        effectiveApp.includes('HighP Web Workspace') ||
+        effectiveApp.length > 30)
+    ) {
+      effectiveApp = profile.currentApplication;
     }
 
     const effectiveStatus = status || profile.currentStatus || ActivityState.ACTIVE;
@@ -144,34 +150,6 @@ export const attendanceHeartbeat = async (req: Request, res: Response, next: Nex
       recentDurationSeconds: Number(recentDurationSeconds) || 0,
       ipAddress: req.ip
     });
-
-    // Ingest activity event so timeline visualizer and app usage get updated
-    if (effectiveStatus === ActivityState.ACTIVE && Number(recentDurationSeconds) > 0 && sessionId) {
-      const dur = Number(recentDurationSeconds);
-      const eventStart = new Date(now.getTime() - dur * 1000);
-      try {
-        await ingestActivityEvents(
-          req.companyId!,
-          employeeId,
-          sessionId,
-          undefined,
-          [
-            {
-              eventId: `web-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              type: ActivityEventType.APPLICATION_FOCUS,
-              applicationName: effectiveApp,
-              processName: 'browser',
-              windowTitleSanitized: effectiveApp,
-              startedAt: eventStart.toISOString(),
-              endedAt: now.toISOString(),
-              durationSeconds: dur
-            }
-          ]
-        );
-      } catch (err) {
-        console.error('[Web Heartbeat] Event ingestion warning:', err);
-      }
-    }
 
     res.status(200).json({
       success: true,
