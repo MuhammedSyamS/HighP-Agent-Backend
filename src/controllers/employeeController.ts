@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { User } from '../models/User';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
+import { ActivityEvent } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
@@ -43,6 +44,23 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
         const email = (user?.email || '').toLowerCase();
         return fullName.includes(term) || code.includes(term) || email.includes(term);
       });
+    }
+
+    // Resolve recent application if currentApplication is empty or for offline display
+    for (const p of results as any[]) {
+      if (!p.currentApplication) {
+        const lastEvt = await ActivityEvent.findOne({
+          companyId: new mongoose.Types.ObjectId(req.companyId),
+          employeeId: p._id,
+          applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
+        })
+          .sort({ startedAt: -1 })
+          .select('applicationName')
+          .lean();
+        if (lastEvt && lastEvt.applicationName) {
+          p.currentApplication = lastEvt.applicationName;
+        }
+      }
     }
 
     res.status(200).json({

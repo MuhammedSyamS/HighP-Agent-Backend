@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { getEmployeeTimeline } from '../services/activityService';
 import { ActivityEvent } from '../models/ActivityEvent';
@@ -34,8 +34,11 @@ export const getTimeline = async (req: Request, res: Response, next: NextFunctio
 
 export const getRecentActivity = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { employeeId, limit = '100' } = req.query;
-    const query: any = { companyId: new mongoose.Types.ObjectId(req.companyId) };
+    const { employeeId, limit = '20' } = req.query;
+    const query: any = {
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
+    };
 
     if (req.user?.role === UserRole.EMPLOYEE) {
       query.employeeId = new mongoose.Types.ObjectId(req.user.employeeProfileId);
@@ -44,6 +47,14 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
     }
 
     const events = await ActivityEvent.find(query)
+      .populate({
+        path: 'employeeId',
+        select: 'employeeCode userId currentApplication currentStatus',
+        populate: {
+          path: 'userId',
+          select: 'firstName lastName email'
+        }
+      })
       .sort({ startedAt: -1 })
       .limit(parseInt(limit as string, 10))
       .lean();
