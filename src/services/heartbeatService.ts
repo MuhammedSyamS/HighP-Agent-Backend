@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
-import { ActivityState } from '../shared';
+import { ActivityState, ActivityEventType } from '../shared';
 import { EmployeeProfile, IEmployeeProfileDocument } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
+import { ActivityEvent } from '../models/ActivityEvent';
+import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Device } from '../models/Device';
 import { Company } from '../models/Company';
 import { emitToCompany } from '../realtime/socketManager';
@@ -53,27 +55,37 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     profile.lastDateReset = todayStr;
   }
 
-  // Check desktop priority: if web heartbeat arrives while desktop agent is actively sending telemetry (<120s),
-  // preserve desktop agent as the authoritative workstation activity source.
+  // Check desktop priority: if web heartbeat arrives while desktop agent is actively connected (<60s)
   const isDesktop = !!deviceId;
-  const isDesktopActive =
-    !isDesktop &&
-    profile.lastHeartbeatAt &&
-    now.getTime() - profile.lastHeartbeatAt.getTime() < 120000;
+  let isDesktopActive = false;
+  if (!isDesktop && profile.currentDeviceId) {
+    const recentDesktop = await Device.findOne({
+      _id: profile.currentDeviceId,
+      companyId,
+      lastHeartbeatAt: { $gte: new Date(now.getTime() - 60000) }
+    });
+    isDesktopActive = !!recentDesktop;
+  }
+
+  const cleanApp = (currentApplication || '').trim();
+  const isValidApp =
+    cleanApp &&
+    !cleanApp.toLowerCase().includes('highp') &&
+    !cleanApp.toLowerCase().includes('electron') &&
+    !cleanApp.toLowerCase().includes('internal workforce') &&
+    !cleanApp.toLowerCase().includes('telemetry') &&
+    cleanApp.toLowerCase() !== 'unknown' &&
+    cleanApp.toLowerCase() !== 'unknown application';
+
+  // Always update heartbeat timestamp to keep worker online
+  profile.lastHeartbeatAt = now;
 
   if (isDesktop) {
     // Desktop agent is authoritative
     profile.currentStatus = status;
-    const cleanApp = (currentApplication || '').trim();
-    if (
-      cleanApp &&
-      !cleanApp.toLowerCase().includes('highp') &&
-      !cleanApp.toLowerCase().includes('electron') &&
-      !cleanApp.toLowerCase().includes('internal workforce')
-    ) {
+    if (isValidApp) {
       profile.currentApplication = cleanApp;
     }
-    profile.lastHeartbeatAt = now;
     if (status === ActivityState.ACTIVE) {
       profile.lastActiveAt = now;
     }
@@ -83,31 +95,100 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       const devDoc = await Device.findOne({ companyId, deviceId });
       if (devDoc) profile.currentDeviceId = devDoc._id as mongoose.Types.ObjectId;
     }
-  } else if (!isDesktopActive) {
-    // Web presence is allowed only when desktop agent is not actively connected
-    profile.currentStatus = status;
-    const cleanApp = (currentApplication || '').trim();
-    if (
-      cleanApp &&
-      !cleanApp.toLowerCase().includes('highp') &&
-      !cleanApp.toLowerCase().includes('electron') &&
-      !cleanApp.toLowerCase().includes('internal workforce')
-    ) {
-      profile.currentApplication = cleanApp;
-    }
-    profile.lastHeartbeatAt = now;
-    if (status === ActivityState.ACTIVE) {
-      profile.lastActiveAt = now;
-    }
   } else {
-    // Desktop is active; web heartbeat is purely web presence keepalive, ignore app/status override
+    // Web Presence
+    if (!isDesktopActive) {
+      profile.currentStatus = status;
+      if (isValidApp) {
+        profile.currentApplication = cleanApp;
+      }
+      if (status === ActivityState.ACTIVE) {
+        profile.lastActiveAt = now;
+      }
+    }
   }
 
-  if (sessionId && mongoose.Types.ObjectId.isValid(sessionId)) {
-    profile.currentSessionId = new mongoose.Types.ObjectId(sessionId);
+  // Increment live work statistics based on duration
+  const durationSec = Math.max(0, recentDurationSeconds);
+  if (durationSec > 0) {
+    if (profile.currentStatus === ActivityState.ACTIVE) {
+      profile.todayActiveSeconds = (profile.todayActiveSeconds || 0) + durationSec;
+    } else if (profile.currentStatus === ActivityState.IDLE) {
+      profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + durationSec;
+    } else if (profile.currentStatus === ActivityState.BREAK) {
+      profile.todayBreakSeconds = (profile.todayBreakSeconds || 0) + durationSec;
+    }
+  }
+
+  // Maintain active session linkage
+  const effectiveSessionId = sessionId || (profile.currentSessionId ? profile.currentSessionId.toString() : undefined);
+  if (effectiveSessionId && mongoose.Types.ObjectId.isValid(effectiveSessionId)) {
+    profile.currentSessionId = new mongoose.Types.ObjectId(effectiveSessionId);
+    if (durationSec > 0) {
+      await AttendanceSession.updateOne(
+        { _id: profile.currentSessionId, companyId },
+        {
+          $set: { lastHeartbeatAt: now },
+          $inc: {
+            ...(profile.currentStatus === ActivityState.ACTIVE && { activeSeconds: durationSec }),
+            ...(profile.currentStatus === ActivityState.IDLE && { idleSeconds: durationSec }),
+            ...(profile.currentStatus === ActivityState.BREAK && { breakSeconds: durationSec })
+          }
+        }
+      );
+    }
   }
 
   await profile.save();
+
+  // Create or coalesce real ActivityEvent and ApplicationUsage for live timeline & recent activity feed
+  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE && durationSec > 0 && profile.currentSessionId) {
+    try {
+      const lastEvent = await ActivityEvent.findOne({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        employeeId: profile._id,
+        sessionId: profile.currentSessionId,
+        type: ActivityEventType.APPLICATION_FOCUS
+      }).sort({ startedAt: -1 });
+
+      const gapMs = lastEvent ? Math.abs(now.getTime() - lastEvent.endedAt.getTime()) : Infinity;
+      if (lastEvent && lastEvent.applicationName.toLowerCase() === cleanApp.toLowerCase() && gapMs <= 120000) {
+        lastEvent.endedAt = now;
+        lastEvent.durationSeconds += durationSec;
+        await lastEvent.save();
+      } else {
+        await ActivityEvent.create({
+          eventId: `live-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          sessionId: profile.currentSessionId,
+          ...(profile.currentDeviceId && { deviceId: profile.currentDeviceId }),
+          type: ActivityEventType.APPLICATION_FOCUS,
+          applicationName: cleanApp,
+          windowTitleSanitized: cleanApp,
+          startedAt: new Date(now.getTime() - durationSec * 1000),
+          endedAt: now,
+          durationSeconds: durationSec
+        });
+      }
+
+      await ApplicationUsage.findOneAndUpdate(
+        {
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          date: todayStr,
+          applicationName: cleanApp
+        },
+        {
+          $inc: { totalSeconds: durationSec },
+          $set: { lastUsedAt: now }
+        },
+        { upsert: true }
+      );
+    } catch (ingestErr) {
+      console.warn('[HeartbeatService] Live event coalescing warning:', ingestErr);
+    }
+  }
 
   // Update Device heartbeat timestamp
   if (deviceId) {
@@ -134,6 +215,15 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     todayBreakSeconds: profile.todayBreakSeconds,
     source: isDesktop ? 'DESKTOP' : isDesktopActive ? 'DESKTOP' : 'WEB'
   });
+
+  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE) {
+    emitToCompany(companyId, 'employee:activity_changed', {
+      companyId,
+      employeeId: profile._id.toString(),
+      currentApplication: cleanApp,
+      timestamp: now.toISOString()
+    });
+  }
 
   return {
     success: true,

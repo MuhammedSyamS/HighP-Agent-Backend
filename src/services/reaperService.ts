@@ -1,4 +1,4 @@
-﻿import { ActivityState, SessionStatus } from '../shared';
+import { ActivityState, SessionStatus } from '../shared';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Company } from '../models/Company';
@@ -12,7 +12,8 @@ export const checkStaleSessions = async () => {
 
     for (const company of companies) {
       const heartbeatSec = company.config?.heartbeatIntervalSeconds || 30;
-      const timeoutThresholdMs = heartbeatSec * 3 * 1000; // 3 missed heartbeats
+      // Use at least 10 minutes timeout threshold to prevent premature session termination from background tab throttling or brief network interruptions
+      const timeoutThresholdMs = Math.max(heartbeatSec * 10 * 1000, 10 * 60 * 1000);
       const cutoff = new Date(Date.now() - timeoutThresholdMs);
 
       // Find active/idle employees whose heartbeat timed out
