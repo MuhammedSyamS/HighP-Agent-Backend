@@ -1,12 +1,11 @@
 import mongoose from 'mongoose';
-import { ActivityState, ActivityEventType } from '../shared';
-import { EmployeeProfile, IEmployeeProfileDocument } from '../models/EmployeeProfile';
+import { ActivityState } from '../shared';
+import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
-import { ActivityEvent } from '../models/ActivityEvent';
-import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Device } from '../models/Device';
 import { Company } from '../models/Company';
 import { emitToCompany } from '../realtime/socketManager';
+import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
 export interface HeartbeatParams {
   companyId: string;
@@ -31,12 +30,10 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     status,
     currentApplication,
     idleSeconds,
-    recentDurationSeconds = 0,
     ipAddress
   } = params;
 
   const now = new Date(timestamp || Date.now());
-  const todayStr = now.toISOString().slice(0, 10);
 
   const profile = await EmployeeProfile.findOne({
     _id: employeeId,
@@ -47,7 +44,12 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     return { success: false, message: 'Employee profile not found' };
   }
 
-  // Handle midnight date reset for daily live counters
+  // Fetch company timezone for midnight reset
+  const company = await Company.findById(companyId);
+  const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+  const todayStr = getDateStringInTimezone(now, companyTz);
+
+  // Midnight date reset for daily live counters
   if (profile.lastDateReset !== todayStr) {
     profile.todayActiveSeconds = 0;
     profile.todayIdleSeconds = 0;
@@ -108,38 +110,15 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     }
   }
 
-  // Increment live work statistics based on duration
-  const durationSec = Math.max(0, recentDurationSeconds);
-  if (durationSec > 0) {
-    if (profile.currentStatus === ActivityState.ACTIVE) {
-      profile.todayActiveSeconds = (profile.todayActiveSeconds || 0) + durationSec;
-    } else if (profile.currentStatus === ActivityState.IDLE) {
-      profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + durationSec;
-    } else if (profile.currentStatus === ActivityState.BREAK) {
-      profile.todayBreakSeconds = (profile.todayBreakSeconds || 0) + durationSec;
-    }
-  }
-
   // Maintain active session linkage
   const effectiveSessionId = sessionId || (profile.currentSessionId ? profile.currentSessionId.toString() : undefined);
   if (effectiveSessionId && mongoose.Types.ObjectId.isValid(effectiveSessionId)) {
     profile.currentSessionId = new mongoose.Types.ObjectId(effectiveSessionId);
-    if (durationSec > 0) {
-      await AttendanceSession.updateOne(
-        { _id: profile.currentSessionId, companyId },
-        {
-          $set: { lastHeartbeatAt: now },
-          $inc: {
-            ...(profile.currentStatus === ActivityState.ACTIVE && { activeSeconds: durationSec }),
-            ...(profile.currentStatus === ActivityState.IDLE && { idleSeconds: durationSec }),
-            ...(profile.currentStatus === ActivityState.BREAK && { breakSeconds: durationSec })
-          }
-        }
-      );
-    }
+    await AttendanceSession.updateOne(
+      { _id: profile.currentSessionId, companyId },
+      { $set: { lastHeartbeatAt: now } }
+    );
   }
-
-  await profile.save();
 
   // Ensure active session linkage if employee is actively working
   if (profile.currentStatus === ActivityState.ACTIVE && !profile.currentSessionId) {
@@ -156,62 +135,15 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
         startedAt: now,
         lastHeartbeatAt: now,
         source: isDesktop ? 'DESKTOP' : 'WEB',
-        activeSeconds: durationSec > 0 ? durationSec : 0
+        activeSeconds: 0,
+        idleSeconds: 0,
+        breakSeconds: 0
       });
     }
     profile.currentSessionId = activeSession._id as mongoose.Types.ObjectId;
-    await profile.save();
   }
 
-  // Create or coalesce real ActivityEvent and ApplicationUsage for live timeline & recent activity feed
-  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE && profile.currentSessionId) {
-    const effectiveSec = Math.max(1, durationSec);
-    try {
-      const lastEvent = await ActivityEvent.findOne({
-        companyId: new mongoose.Types.ObjectId(companyId),
-        employeeId: profile._id,
-        sessionId: profile.currentSessionId,
-        type: ActivityEventType.APPLICATION_FOCUS
-      }).sort({ startedAt: -1 });
-
-      const gapMs = lastEvent ? Math.abs(now.getTime() - lastEvent.endedAt.getTime()) : Infinity;
-      if (lastEvent && lastEvent.applicationName.toLowerCase() === cleanApp.toLowerCase() && gapMs <= 120000) {
-        lastEvent.endedAt = now;
-        lastEvent.durationSeconds += effectiveSec;
-        await lastEvent.save();
-      } else {
-        await ActivityEvent.create({
-          eventId: `live-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-          companyId: new mongoose.Types.ObjectId(companyId),
-          employeeId: profile._id,
-          sessionId: profile.currentSessionId,
-          ...(profile.currentDeviceId && { deviceId: profile.currentDeviceId }),
-          type: ActivityEventType.APPLICATION_FOCUS,
-          applicationName: cleanApp,
-          windowTitleSanitized: cleanApp,
-          startedAt: new Date(now.getTime() - effectiveSec * 1000),
-          endedAt: now,
-          durationSeconds: effectiveSec
-        });
-      }
-
-      await ApplicationUsage.findOneAndUpdate(
-        {
-          companyId: new mongoose.Types.ObjectId(companyId),
-          employeeId: profile._id,
-          date: todayStr,
-          applicationName: cleanApp
-        },
-        {
-          $inc: { totalSeconds: effectiveSec },
-          $set: { lastUsedAt: now }
-        },
-        { upsert: true }
-      );
-    } catch (ingestErr) {
-      console.warn('[HeartbeatService] Live event coalescing warning:', ingestErr);
-    }
-  }
+  await profile.save();
 
   // Update Device heartbeat timestamp
   if (deviceId) {

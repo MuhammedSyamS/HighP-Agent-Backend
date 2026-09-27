@@ -3,6 +3,8 @@ import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Company } from '../models/Company';
 import { emitToCompany } from '../realtime/socketManager';
+import { rebuildEmployeeDay } from './rebuildService';
+import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
 let reaperInterval: NodeJS.Timeout | null = null;
 
@@ -40,6 +42,10 @@ export const checkStaleSessions = async () => {
               session.status = SessionStatus.COMPLETED;
               session.endReason = 'Stale Disconnect (Heartbeat Timeout)';
               await session.save();
+
+              const companyTz = company.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+              const disconnectDateStr = getDateStringInTimezone(disconnectTime, companyTz);
+              await rebuildEmployeeDay(company._id.toString(), employee._id.toString(), disconnectDateStr);
 
               emitToCompany(company._id.toString(), 'employee:session_ended', {
                 companyId: company._id.toString(),

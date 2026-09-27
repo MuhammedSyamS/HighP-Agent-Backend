@@ -58,11 +58,13 @@ export const createApp = (): Express => {
         return res.status(500).json({
           success: false,
           message: 'Database connection failed',
-          error: err?.message,
-          hasMongoUri: !!process.env.MONGODB_URI,
-          hint: !process.env.MONGODB_URI
-            ? 'MONGODB_URI is not set in Vercel Environment Variables. Please add MONGODB_URI in Vercel Project Settings.'
-            : 'Make sure MongoDB Atlas Network Access has 0.0.0.0/0 (Allow access from anywhere) enabled.'
+          ...(process.env.NODE_ENV === 'development' && {
+            error: err?.message,
+            hasMongoUri: !!process.env.MONGODB_URI,
+            hint: !process.env.MONGODB_URI
+              ? 'MONGODB_URI is not set in Vercel Environment Variables. Please add MONGODB_URI in Vercel Project Settings.'
+              : 'Make sure MongoDB Atlas Network Access has 0.0.0.0/0 enabled.'
+          })
         });
       }
     }

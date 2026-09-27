@@ -46,7 +46,7 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
       query.employeeId = new mongoose.Types.ObjectId(employeeId as string);
     }
 
-    const events = await ActivityEvent.find(query)
+    const events: any[] = await ActivityEvent.find(query)
       .populate({
         path: 'employeeId',
         select: 'employeeCode userId currentApplication currentStatus',

@@ -2,10 +2,13 @@ import mongoose from 'mongoose';
 import { ActivityEvent } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { EmployeeProfile } from '../models/EmployeeProfile';
+import { AttendanceSession } from '../models/AttendanceSession';
+import { DailySummary } from '../models/DailySummary';
 import { Break } from '../models/Break';
 import { Company } from '../models/Company';
 import { ActivityEventType } from '../shared';
 import { determineCategory } from './activityService';
+import { getDayRangeInTimezone, getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
 export interface DayRebuildResult {
   date: string;
@@ -25,23 +28,26 @@ export const rebuildEmployeeDay = async (
   const companyObjId = new mongoose.Types.ObjectId(companyId);
   const employeeObjId = new mongoose.Types.ObjectId(employeeId);
 
-  const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
-  const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+  const company = await Company.findById(companyObjId);
+  const companyTimezone = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+  const categories = company?.config?.appCategories || [];
 
-  // 1. Fetch all authoritative ActivityEvents for this day
+  // Determine authoritative day boundaries in company timezone
+  const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(dateStr, companyTimezone);
+
+  // 1. Fetch all authoritative ActivityEvents for this day (exclude internal self-monitoring & legacy synthetic live events)
   const events = await ActivityEvent.find({
     companyId: companyObjId,
     employeeId: employeeObjId,
-    startedAt: { $gte: startOfDay, $lte: endOfDay }
+    startedAt: { $gte: startOfDay, $lte: endOfDay },
+    eventId: { $not: /^live-/ },
+    applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
   })
     .sort({ startedAt: 1 })
     .lean();
 
-  const company = await Company.findById(companyObjId);
-  const categories = company?.config?.appCategories || [];
-
   // 2. Aggregate application usage from events
-  const appMap: Record<string, { duration: number; lastUsed: Date }> = {};
+  const appMap: Record<string, { duration: number; category: string; lastUsed: Date }> = {};
   let totalActiveSeconds = 0;
   let totalIdleSeconds = 0;
 
@@ -54,8 +60,10 @@ export const rebuildEmployeeDay = async (
     } else {
       totalActiveSeconds += dur;
       const appName = ev.applicationName.trim() || 'Unknown Application';
+      const cat = determineCategory(appName, categories);
+
       if (!appMap[appName]) {
-        appMap[appName] = { duration: 0, lastUsed: ev.endedAt };
+        appMap[appName] = { duration: 0, category: cat, lastUsed: ev.endedAt };
       }
       appMap[appName].duration += dur;
       if (ev.endedAt > appMap[appName].lastUsed) {
@@ -66,7 +74,6 @@ export const rebuildEmployeeDay = async (
 
   // 3. Atomically reconcile ApplicationUsage collection for this day
   for (const [appName, stats] of Object.entries(appMap)) {
-    const cat = determineCategory(appName, categories);
     await ApplicationUsage.findOneAndUpdate(
       {
         companyId: companyObjId,
@@ -77,7 +84,7 @@ export const rebuildEmployeeDay = async (
       {
         $set: {
           totalSeconds: stats.duration,
-          category: cat,
+          category: stats.category,
           lastUsedAt: stats.lastUsed
         }
       },
@@ -94,9 +101,56 @@ export const rebuildEmployeeDay = async (
 
   const totalBreakSeconds = breaks.reduce((acc, b) => acc + (b.durationSeconds || 0), 0);
 
-  // 5. If date is today, synchronize authoritative cached daily counters on EmployeeProfile
-  const todayStr = new Date().toISOString().slice(0, 10);
-  if (dateStr === todayStr) {
+  // 5. Fetch AttendanceSessions for first/last timestamps
+  const sessions = await AttendanceSession.find({
+    companyId: companyObjId,
+    employeeId: employeeObjId,
+    startedAt: { $gte: startOfDay, $lte: endOfDay }
+  })
+    .sort({ startedAt: 1 })
+    .lean();
+
+  let firstSessionStart: Date | undefined;
+  let lastSessionEnd: Date | undefined;
+  let totalSessionSeconds = 0;
+
+  if (sessions.length > 0) {
+    firstSessionStart = sessions[0].startedAt;
+    const lastSess = sessions[sessions.length - 1];
+    lastSessionEnd = lastSess.endedAt || undefined;
+    totalSessionSeconds = totalActiveSeconds + totalIdleSeconds + totalBreakSeconds;
+  }
+
+  // 6. Upsert authoritative DailySummary record
+  const summaryAppUsage = Object.entries(appMap).map(([appName, stats]) => ({
+    applicationName: appName,
+    category: stats.category,
+    totalSeconds: stats.duration
+  }));
+
+  await DailySummary.findOneAndUpdate(
+    {
+      companyId: companyObjId,
+      employeeId: employeeObjId,
+      date: dateStr
+    },
+    {
+      $set: {
+        firstSessionStart,
+        lastSessionEnd,
+        totalSessionSeconds,
+        activeSeconds: totalActiveSeconds,
+        idleSeconds: totalIdleSeconds,
+        breakSeconds: totalBreakSeconds,
+        applicationUsage: summaryAppUsage
+      }
+    },
+    { upsert: true }
+  );
+
+  // 7. If date matches today in the company's timezone, synchronize live profile cache
+  const todayInCompanyTz = getDateStringInTimezone(new Date(), companyTimezone);
+  if (dateStr === todayInCompanyTz) {
     await EmployeeProfile.updateOne(
       { _id: employeeObjId, companyId: companyObjId },
       {
@@ -104,7 +158,7 @@ export const rebuildEmployeeDay = async (
           todayActiveSeconds: totalActiveSeconds,
           todayIdleSeconds: totalIdleSeconds,
           todayBreakSeconds: totalBreakSeconds,
-          lastDateReset: todayStr
+          lastDateReset: todayInCompanyTz
         }
       }
     );

@@ -1,18 +1,21 @@
-﻿import mongoose from 'mongoose';
+import mongoose from 'mongoose';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { EmployeeProfile } from '../models/EmployeeProfile';
+import { Company } from '../models/Company';
 import { User } from '../models/User';
 import { IDailyReportRow, IWeeklyMonthlyReportRow } from '../shared';
+import { getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
 export const getDailyReport = async (
   companyId: string,
   dateStr: string, // "YYYY-MM-DD"
   employeeId?: string
 ): Promise<IDailyReportRow[]> => {
-  const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
-  const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
   const companyObjId = new mongoose.Types.ObjectId(companyId);
+  const company = await Company.findById(companyObjId);
+  const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+  const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(dateStr, companyTz);
 
   const employeeQuery: any = { companyId: companyObjId };
   if (employeeId) {
@@ -115,9 +118,11 @@ export const getWeeklyMonthlyReport = async (
   periodLabel: string,  // e.g. "2026-W38" or "2026-09"
   employeeId?: string
 ): Promise<IWeeklyMonthlyReportRow[]> => {
-  const start = new Date(`${startDateStr}T00:00:00.000Z`);
-  const end = new Date(`${endDateStr}T23:59:59.999Z`);
   const companyObjId = new mongoose.Types.ObjectId(companyId);
+  const company = await Company.findById(companyObjId);
+  const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+  const { start } = getDayRangeInTimezone(startDateStr, companyTz);
+  const { end } = getDayRangeInTimezone(endDateStr, companyTz);
 
   const employeeQuery: any = { companyId: companyObjId };
   if (employeeId) {

@@ -7,6 +7,7 @@ import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Device } from '../models/Device';
 import { emitToCompany } from '../realtime/socketManager';
+import { getDayRangeInTimezone, getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
 export interface IngestEventInput {
   eventId: string;
@@ -37,10 +38,11 @@ export const ingestActivityEvents = async (
   events: IngestEventInput[]
 ) => {
   if (!events || events.length === 0) {
-    return { ingestedCount: 0, duplicatesCount: 0 };
+    return { accepted: [], duplicates: [], failed: [], ingestedCount: 0, duplicatesCount: 0 };
   }
 
   const company = await Company.findById(companyId);
+  const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
   const categories = company?.config?.appCategories || [];
 
   // Resolve device ObjectId if a string identifier was provided
@@ -81,7 +83,7 @@ export const ingestActivityEvents = async (
   for (const event of events) {
     const started = new Date(event.startedAt);
     const ended = new Date(event.endedAt);
-    const dateStr = started.toISOString().slice(0, 10);
+    const dateStr = getDateStringInTimezone(started, companyTz);
     const duration = Math.max(0, event.durationSeconds || Math.round((ended.getTime() - started.getTime()) / 1000));
     const cleanAppName = event.applicationName.trim() || 'Unknown Application';
     const category = determineCategory(cleanAppName, categories);
@@ -220,7 +222,7 @@ export const ingestActivityEvents = async (
   // Synchronize derived daily totals if any new events were accepted
   if (accepted.length > 0) {
     try {
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = getDateStringInTimezone(new Date(), companyTz);
       const { rebuildEmployeeDay } = await import('./rebuildService');
       await rebuildEmployeeDay(companyId, employeeId, todayStr);
     } catch (rebuildErr) {
@@ -242,13 +244,15 @@ export const getEmployeeTimeline = async (
   employeeId: string,
   dateStr: string // "YYYY-MM-DD"
 ) => {
-  const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
-  const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
+  const company = await Company.findById(companyId);
+  const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+  const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(dateStr, companyTz);
 
   const events = await ActivityEvent.find({
     companyId: new mongoose.Types.ObjectId(companyId),
     employeeId: new mongoose.Types.ObjectId(employeeId),
     startedAt: { $gte: startOfDay, $lte: endOfDay },
+    eventId: { $not: /^live-/ },
     applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
   })
     .sort({ startedAt: 1 })
