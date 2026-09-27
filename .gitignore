@@ -54,3 +54,4 @@ Thumbs.db
 # Temporary Diagnostic Scripts
 src/scripts/test*.js
 src/scripts/check*.js
+purge_dummy_data.js
