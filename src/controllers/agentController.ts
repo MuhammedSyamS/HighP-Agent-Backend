@@ -28,6 +28,7 @@ export const registerDevice = async (req: Request, res: Response, next: NextFunc
       if (device.status === DeviceStatus.REVOKED) {
         throw new AppError('This device has been revoked by your administrator. Contact support.', 403);
       }
+      device.employeeId = new mongoose.Types.ObjectId(employeeId);
       device.deviceName = deviceName;
       device.osInfo = osInfo;
       device.agentVersion = agentVersion;
@@ -47,6 +48,11 @@ export const registerDevice = async (req: Request, res: Response, next: NextFunc
         lastIpAddress: req.ip
       });
     }
+
+    await EmployeeProfile.updateOne(
+      { _id: new mongoose.Types.ObjectId(employeeId), companyId: new mongoose.Types.ObjectId(req.companyId) },
+      { $set: { currentDeviceId: device._id } }
+    );
 
     const company = await Company.findById(req.companyId);
 

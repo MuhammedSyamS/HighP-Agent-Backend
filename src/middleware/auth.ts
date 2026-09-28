@@ -1,9 +1,10 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { UserRole } from '../shared';
 import { config } from '../config';
 import { User, IUserDocument } from '../models/User';
 import { Device, IDeviceDocument } from '../models/Device';
+import { EmployeeProfile } from '../models/EmployeeProfile';
 import mongoose from 'mongoose';
 
 export interface AuthenticatedUser {
@@ -105,12 +106,22 @@ export const authenticateAgent = async (req: Request, res: Response, next: NextF
       deviceId?: string;
     };
 
+    let employeeProfileId = decoded.employeeProfileId;
+    if (!employeeProfileId && decoded.userId) {
+      const profile = await EmployeeProfile.findOne({
+        userId: new mongoose.Types.ObjectId(decoded.userId)
+      });
+      if (profile) {
+        employeeProfileId = profile._id.toString();
+      }
+    }
+
     req.user = {
       userId: decoded.userId,
       email: decoded.email,
       role: decoded.role,
       companyId: decoded.companyId,
-      employeeProfileId: decoded.employeeProfileId
+      employeeProfileId
     };
     req.companyId = decoded.companyId;
 
@@ -118,7 +129,7 @@ export const authenticateAgent = async (req: Request, res: Response, next: NextF
       req.device = {
         deviceId: decoded.deviceId,
         companyId: decoded.companyId,
-        employeeId: decoded.employeeProfileId || ''
+        employeeId: employeeProfileId || ''
       };
     }
 

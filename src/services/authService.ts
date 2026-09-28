@@ -243,17 +243,20 @@ export const loginUser = async (data: { email: string; password: string }) => {
     throw new AppError('Associated company not found.', 404);
   }
 
-  const tokens = generateTokens(user);
-  user.refreshToken = tokens.refreshToken;
-  await user.save();
-
   let profile = null;
   if (user.employeeProfileId) {
     profile = await EmployeeProfile.findById(user.employeeProfileId);
   }
   if (!profile) {
     profile = await EmployeeProfile.findOne({ userId: user._id });
+    if (profile) {
+      user.employeeProfileId = profile._id;
+    }
   }
+
+  const tokens = generateTokens(user);
+  user.refreshToken = tokens.refreshToken;
+  await user.save();
 
   return {
     user: {

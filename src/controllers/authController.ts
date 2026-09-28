@@ -105,6 +105,13 @@ export const getMe = async (req: Request, res: Response, next: NextFunction): Pr
     if (user.employeeProfileId) {
       profile = await EmployeeProfile.findById(user.employeeProfileId);
     }
+    if (!profile) {
+      profile = await EmployeeProfile.findOne({ userId: user._id });
+      if (profile && !user.employeeProfileId) {
+        user.employeeProfileId = profile._id as any;
+        await user.save();
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -115,7 +122,9 @@ export const getMe = async (req: Request, res: Response, next: NextFunction): Pr
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
-          status: user.status
+          status: user.status,
+          companyId: user.companyId,
+          employeeProfileId: user.employeeProfileId
         },
         company: company
           ? {

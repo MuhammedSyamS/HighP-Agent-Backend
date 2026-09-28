@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "postinstall": "tsc",
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --watch-path=src -r ts-node/register/transpile-only src/server.ts",
     "start": "node dist/server.js",
     "test": "ts-node src/scripts/test-suite.ts",
     "typecheck": "tsc --noEmit"
@@ -36,7 +36,6 @@
     "@types/jsonwebtoken": "^9.0.8",
     "@types/morgan": "^1.9.9",
     "@types/uuid": "^10.0.0",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.16.5"
+    "ts-node": "^10.9.2"
   }
 }

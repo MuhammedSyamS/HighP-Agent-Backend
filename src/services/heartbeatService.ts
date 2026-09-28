@@ -60,12 +60,17 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   // Check desktop priority: if web heartbeat arrives while desktop agent is actively connected (<60s)
   const isDesktop = !!deviceId;
   let isDesktopActive = false;
-  if (!isDesktop && profile.currentDeviceId) {
-    const recentDesktop = await Device.findOne({
-      _id: profile.currentDeviceId,
+  if (!isDesktop) {
+    const devQuery: any = {
       companyId,
       lastHeartbeatAt: { $gte: new Date(now.getTime() - 60000) }
-    });
+    };
+    if (profile.currentDeviceId) {
+      devQuery._id = profile.currentDeviceId;
+    } else {
+      devQuery.employeeId = profile._id;
+    }
+    const recentDesktop = await Device.findOne(devQuery);
     isDesktopActive = !!recentDesktop;
   }
 
