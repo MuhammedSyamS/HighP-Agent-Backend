@@ -1,4 +1,4 @@
-﻿import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from 'mongoose';
 import { ActivityState } from '../shared';
 
 export interface IEmployeeProfileDocument extends Document {
@@ -12,6 +12,8 @@ export interface IEmployeeProfileDocument extends Document {
   currentDeviceId?: mongoose.Types.ObjectId;
   currentStatus: ActivityState;
   currentApplication?: string;
+  currentExecutable?: string;
+  currentAppStartedAt?: Date;
   lastActiveAt?: Date;
   lastHeartbeatAt?: Date;
   todayActiveSeconds: number;
@@ -34,6 +36,8 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfileDocument>(
     currentDeviceId: { type: Schema.Types.ObjectId, ref: 'Device' },
     currentStatus: { type: String, enum: Object.values(ActivityState), default: ActivityState.OFFLINE },
     currentApplication: { type: String, default: '' },
+    currentExecutable: { type: String, default: '' },
+    currentAppStartedAt: { type: Date },
     lastActiveAt: { type: Date },
     lastHeartbeatAt: { type: Date },
     todayActiveSeconds: { type: Number, default: 0 },

@@ -1,7 +1,8 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import {
   getEmployees,
   getEmployeeById,
+  getEmployeeLiveTelemetry,
   createEmployee,
   updateEmployee,
   deleteEmployee,
@@ -19,6 +20,7 @@ router.use(enforceTenant);
 
 router.get('/overview', requireRoles([UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getDashboardOverview);
 router.get('/', requireRoles([UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getEmployees);
+router.get('/:id/live', getEmployeeLiveTelemetry);
 router.get('/:id', getEmployeeById);
 
 router.post(

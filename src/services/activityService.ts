@@ -190,33 +190,13 @@ export const ingestActivityEvents = async (
     }
   }
 
-  // Update employee profile's current app if recent event (and not HighP agent)
-  if (events.length > 0) {
-    const validEvents = events.filter((e) => {
-      const a = (e.applicationName || '').toLowerCase();
-      return (
-        a &&
-        !a.includes('highp') &&
-        !a.includes('internal workforce') &&
-        !a.includes('highphaus') &&
-        !a.includes('electron')
-      );
+  // Emit activity:ingested notification so reports/timelines can refresh if needed
+  if (accepted.length > 0) {
+    emitToCompany(companyId, 'activity:ingested', {
+      companyId,
+      employeeId,
+      count: accepted.length
     });
-
-    if (validEvents.length > 0) {
-      const latestEvent = validEvents[validEvents.length - 1];
-      await EmployeeProfile.updateOne(
-        { _id: employeeId, companyId },
-        { $set: { currentApplication: latestEvent.applicationName } }
-      );
-
-      emitToCompany(companyId, 'employee:activity_changed', {
-        companyId,
-        employeeId,
-        currentApplication: latestEvent.applicationName,
-        timestamp: latestEvent.endedAt
-      });
-    }
   }
 
   // Synchronize derived daily totals if any new events were accepted

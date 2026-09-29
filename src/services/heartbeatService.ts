@@ -6,6 +6,7 @@ import { Device } from '../models/Device';
 import { Company } from '../models/Company';
 import { emitToCompany } from '../realtime/socketManager';
 import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { liveTelemetryService } from './liveTelemetryService';
 
 export interface HeartbeatParams {
   companyId: string;
@@ -15,8 +16,14 @@ export interface HeartbeatParams {
   timestamp: string;
   status: ActivityState;
   currentApplication?: string;
+  executable?: string;
+  hwnd?: number | null;
+  pid?: number | null;
+  startedAt?: string | null;
+  activeDurationSeconds?: number;
   idleSeconds: number;
   recentDurationSeconds?: number;
+  windowTitle?: string | null;
   ipAddress?: string;
 }
 
@@ -29,6 +36,12 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     timestamp,
     status,
     currentApplication,
+    executable,
+    hwnd,
+    pid,
+    startedAt,
+    activeDurationSeconds,
+    windowTitle,
     idleSeconds,
     ipAddress
   } = params;
@@ -84,6 +97,16 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     cleanApp.toLowerCase() !== 'unknown' &&
     cleanApp.toLowerCase() !== 'unknown application';
 
+  // Drop out-of-order heartbeats if an older timestamp arrives
+  if (profile.lastHeartbeatAt && now < profile.lastHeartbeatAt) {
+    return {
+      success: true,
+      serverTime: now.toISOString(),
+      status: profile.currentStatus,
+      stale: true
+    };
+  }
+
   // Always update heartbeat timestamp to keep worker online
   profile.lastHeartbeatAt = now;
 
@@ -91,8 +114,24 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     // Desktop agent is authoritative
     profile.currentStatus = status;
     if (isValidApp) {
+      if (profile.currentApplication !== cleanApp) {
+        profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+      } else if (!profile.currentAppStartedAt) {
+        profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+      }
       profile.currentApplication = cleanApp;
+      profile.currentExecutable = executable || profile.currentExecutable || '';
+    } else if (status !== ActivityState.ACTIVE) {
+      profile.currentApplication = '';
+      profile.currentExecutable = '';
+      profile.currentAppStartedAt = undefined;
+    } else {
+      // Active but unknown or empty app: clear stale application identity
+      profile.currentApplication = cleanApp || '';
+      profile.currentExecutable = executable || '';
+      profile.currentAppStartedAt = undefined;
     }
+
     if (status === ActivityState.ACTIVE) {
       profile.lastActiveAt = now;
     }
@@ -103,11 +142,25 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       if (devDoc) profile.currentDeviceId = devDoc._id as mongoose.Types.ObjectId;
     }
   } else {
-    // Web Presence
+    // Web Presence: Only update if no desktop agent has reported recently
     if (!isDesktopActive) {
       profile.currentStatus = status;
       if (isValidApp) {
+        if (profile.currentApplication !== cleanApp) {
+          profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+        } else if (!profile.currentAppStartedAt) {
+          profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+        }
         profile.currentApplication = cleanApp;
+        profile.currentExecutable = executable || profile.currentExecutable || '';
+      } else if (status !== ActivityState.ACTIVE) {
+        profile.currentApplication = '';
+        profile.currentExecutable = '';
+        profile.currentAppStartedAt = undefined;
+      } else {
+        profile.currentApplication = cleanApp || '';
+        profile.currentExecutable = executable || '';
+        profile.currentAppStartedAt = undefined;
       }
       if (status === ActivityState.ACTIVE) {
         profile.lastActiveAt = now;
@@ -163,6 +216,33 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     );
   }
 
+  // Update In-Memory Live Telemetry State and Broadcast
+  const effectiveApp = profile.currentStatus === ActivityState.ACTIVE ? profile.currentApplication || null : null;
+  const effectiveStartedAt = profile.currentAppStartedAt ? profile.currentAppStartedAt.toISOString() : (startedAt || null);
+  const effectiveDuration = activeDurationSeconds != null
+    ? activeDurationSeconds
+    : profile.currentAppStartedAt
+    ? Math.max(0, Math.round((now.getTime() - profile.currentAppStartedAt.getTime()) / 1000))
+    : 0;
+
+  console.log(`[BACKEND]\napplication=${effectiveApp}`);
+  console.log(`[SOCKET]\napplication=${effectiveApp}`);
+
+  liveTelemetryService.setLiveTelemetry({
+    employeeProfileId: profile._id.toString(),
+    companyId: companyId.toString(),
+    hwnd: hwnd != null ? Number(hwnd) : null,
+    pid: pid != null ? Number(pid) : null,
+    executable: profile.currentExecutable || executable || null,
+    application: effectiveApp,
+    windowTitle: windowTitle || null,
+    startedAt: effectiveStartedAt,
+    lastSeenAt: now.toISOString(),
+    activeDurationSeconds: effectiveDuration,
+    idleSeconds: Number(idleSeconds) || 0,
+    status: (profile.currentStatus || ActivityState.OFFLINE).toLowerCase() as any
+  });
+
   // Real-time broadcast with authoritative current state
   emitToCompany(companyId, 'employee:status_changed', {
     companyId,
@@ -181,6 +261,8 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       companyId,
       employeeId: profile._id.toString(),
       currentApplication: cleanApp,
+      startedAt: effectiveStartedAt,
+      durationSeconds: effectiveDuration,
       timestamp: now.toISOString()
     });
   }

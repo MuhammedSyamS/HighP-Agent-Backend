@@ -80,7 +80,21 @@ export const heartbeat = async (req: Request, res: Response, next: NextFunction)
       throw new AppError('Unauthorized agent heartbeat: no employee profile', 400);
     }
 
-    const { deviceId, sessionId, timestamp, status, currentApplication, idleSeconds, recentDurationSeconds } = req.body;
+    const {
+      deviceId,
+      sessionId,
+      timestamp,
+      status,
+      currentApplication,
+      executable,
+      hwnd,
+      pid,
+      startedAt,
+      activeDurationSeconds,
+      windowTitle,
+      idleSeconds,
+      recentDurationSeconds
+    } = req.body;
 
     // Verify device status is not revoked
     if (deviceId) {
@@ -98,6 +112,12 @@ export const heartbeat = async (req: Request, res: Response, next: NextFunction)
       timestamp,
       status,
       currentApplication,
+      executable,
+      hwnd: hwnd != null ? Number(hwnd) : null,
+      pid: pid != null ? Number(pid) : null,
+      startedAt,
+      activeDurationSeconds: activeDurationSeconds != null ? Number(activeDurationSeconds) : undefined,
+      windowTitle,
       idleSeconds,
       recentDurationSeconds,
       ipAddress: req.ip

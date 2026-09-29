@@ -99,19 +99,20 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
           existingMatch.todayTotalSeconds = usageDoc.totalSeconds;
         }
       } else {
-        const elapsedSec = emp.lastActiveAt
-          ? Math.max(5, Math.round((Date.now() - new Date(emp.lastActiveAt).getTime()) / 1000))
-          : 15;
+        const appStart = emp.currentAppStartedAt ? new Date(emp.currentAppStartedAt) : null;
+        const liveDuration = appStart && !isNaN(appStart.getTime())
+          ? Math.max(1, Math.round((Date.now() - appStart.getTime()) / 1000))
+          : elapsedSec;
 
         liveItems.push({
           _id: `live-${emp._id}`,
           eventId: `live-${emp._id}`,
           type: 'APPLICATION_FOCUS',
           applicationName: cleanApp,
-          startedAt: emp.lastActiveAt ? new Date(emp.lastActiveAt) : new Date(Date.now() - elapsedSec * 1000),
+          startedAt: appStart || (emp.lastActiveAt ? new Date(emp.lastActiveAt) : new Date(Date.now() - elapsedSec * 1000)),
           endedAt: new Date(),
-          durationSeconds: usageDoc?.totalSeconds || elapsedSec,
-          todayTotalSeconds: usageDoc?.totalSeconds,
+          durationSeconds: liveDuration,
+          todayTotalSeconds: usageDoc?.totalSeconds || liveDuration,
           isLiveNow: true,
           employeeId: {
             _id: emp._id,

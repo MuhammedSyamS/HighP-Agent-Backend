@@ -9,6 +9,9 @@ import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
 import { AuditAction, UserStatus, UserRole, ActivityState, IDashboardOverview } from '../shared';
+import { liveTelemetryService } from '../services/liveTelemetryService';
+import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { Company } from '../models/Company';
 
 
 export const getEmployees = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -46,20 +49,10 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       });
     }
 
-    // Resolve recent application if currentApplication is empty or for offline display
+    // Ensure currentApplication strictly reflects active status, never stale historical events
     for (const p of results as any[]) {
-      if (!p.currentApplication) {
-        const lastEvt = await ActivityEvent.findOne({
-          companyId: new mongoose.Types.ObjectId(req.companyId),
-          employeeId: p._id,
-          applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
-        })
-          .sort({ startedAt: -1 })
-          .select('applicationName')
-          .lean();
-        if (lastEvt && lastEvt.applicationName) {
-          p.currentApplication = lastEvt.applicationName;
-        }
+      if (p.currentStatus !== ActivityState.ACTIVE) {
+        p.currentApplication = '';
       }
     }
 
@@ -116,8 +109,10 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
       employeeId: profile._id
     }).lean();
 
-    // Fetch today's top applications
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // Fetch today's top applications using company timezone
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const todayStr = getDateStringInTimezone(new Date(), companyTz);
     const topApps = await ApplicationUsage.find({
       companyId: req.companyId,
       employeeId: profile._id,
@@ -134,6 +129,29 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
         devices,
         topApps
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getEmployeeLiveTelemetry = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      throw new AppError('Invalid employee ID', 400);
+    }
+
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      if (!req.user.employeeProfileId || req.user.employeeProfileId.toString() !== id) {
+        throw new AppError('Forbidden: Employees can only view their own live telemetry', 403);
+      }
+    }
+
+    const state = await liveTelemetryService.getLiveTelemetry(id, req.companyId);
+    res.status(200).json({
+      success: true,
+      data: state
     });
   } catch (error) {
     next(error);
