@@ -106,8 +106,11 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     }).lean();
   }
 
-  const isExplicitlyIgnored = trackedDoc ? (trackedDoc.ignored || !trackedDoc.tracked) : false;
-  const isTracked = trackedDoc ? Boolean(trackedDoc.tracked && !trackedDoc.ignored) : false;
+  const trackingState: 'TRACKED' | 'IGNORED' | 'UNKNOWN' = trackedDoc
+    ? (trackedDoc.tracked && !trackedDoc.ignored ? 'TRACKED' : 'IGNORED')
+    : 'UNKNOWN';
+
+  const isTracked = trackingState === 'TRACKED';
 
   // If application is unknown and not system, record in DiscoveredApplication
   if (!trackedDoc && exeLower && exeLower.endsWith('.exe') && !cleanApp.toLowerCase().includes('highp')) {
@@ -128,18 +131,12 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     ).catch(() => {});
   }
 
-  if (isExplicitlyIgnored || !isTracked) {
-    cleanApp = '';
-  }
-
   const isValidApp =
     cleanApp &&
     !cleanApp.toLowerCase().includes('highp') &&
     !cleanApp.toLowerCase().includes('electron') &&
     !cleanApp.toLowerCase().includes('internal workforce') &&
-    !cleanApp.toLowerCase().includes('telemetry') &&
-    cleanApp.toLowerCase() !== 'unknown' &&
-    cleanApp.toLowerCase() !== 'unknown application';
+    !cleanApp.toLowerCase().includes('telemetry');
 
   // Drop out-of-order heartbeats if an older timestamp arrives
   if (profile.lastHeartbeatAt && now < profile.lastHeartbeatAt) {
@@ -381,6 +378,8 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     employeeId: profile._id.toString(),
     status: profile.currentStatus,
     currentApplication: profile.currentApplication,
+    currentTrackingState: trackingState,
+    executable: profile.currentExecutable,
     lastActiveAt: profile.lastActiveAt?.toISOString(),
     todayActiveSeconds: profile.todayActiveSeconds,
     todayIdleSeconds: profile.todayIdleSeconds,
@@ -388,11 +387,26 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     source: isDesktop ? 'DESKTOP' : isDesktopActive ? 'DESKTOP' : 'WEB'
   });
 
-  if (isValidApp && isTracked && profile.currentStatus === ActivityState.ACTIVE) {
+  // Dedicated Section 13 event: agent:current-application
+  emitToCompany(companyId, 'agent:current-application', {
+    companyId,
+    employeeId: profile._id.toString(),
+    deviceId: deviceId || (profile.currentDeviceId ? profile.currentDeviceId.toString() : ''),
+    application: {
+      name: profile.currentApplication || 'Desktop',
+      executableName: profile.currentExecutable || executable || '',
+      category: trackedDoc?.category || 'Other',
+      trackingState
+    },
+    timestamp: now.toISOString()
+  });
+
+  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE) {
     emitToCompany(companyId, 'employee:activity_changed', {
       companyId,
       employeeId: profile._id.toString(),
-      currentApplication: cleanApp,
+      currentApplication: profile.currentApplication,
+      trackingState,
       startedAt: effectiveStartedAt,
       durationSeconds: effectiveDuration,
       timestamp: now.toISOString()
