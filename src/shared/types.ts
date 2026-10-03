@@ -316,4 +316,70 @@ export interface ISocketEvents {
     durationSeconds: number;
     endedAt: string;
   };
+  'applications:updated': {
+    companyId: string;
+    version: number;
+  };
 }
+
+// Application Registry Models
+export interface ITrackedApplication {
+  id: string;
+  _id?: string;
+  companyId: string;
+  name: string;
+  executableNames: string[];
+  executablePaths?: string[];
+  category: string;
+  tracked: boolean;
+  ignored: boolean;
+  isSystemApp: boolean;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+export interface IDiscoveredApplication {
+  id: string;
+  _id?: string;
+  companyId: string;
+  executableName: string;
+  executablePath?: string;
+  windowTitle?: string;
+  detectedTimes: number;
+  firstSeenAt: Date | string;
+  lastSeenAt: Date | string;
+  lastSeenByEmployeeId?: string;
+  status: 'DISCOVERED' | 'TRACKED' | 'IGNORED';
+  createdAt?: Date | string;
+  updatedAt?: Date | string;
+}
+
+export interface ResolvedApplication {
+  applicationId?: string;
+  name: string;
+  executableName: string;
+  executablePath?: string;
+  processId: number;
+  category: string;
+  trackingState: 'TRACKED' | 'IGNORED' | 'UNKNOWN';
+  tracked: boolean;
+  ignored: boolean;
+  isUnknown: boolean;
+  confidence: 'high' | 'medium' | 'unknown';
+}
+
+export interface IApplicationConfigResponse {
+  version: number;
+  upToDate?: boolean;
+  applications: Array<{
+    id: string;
+    name: string;
+    executableNames: string[];
+    executablePaths?: string[];
+    category: string;
+    tracked: boolean;
+    ignored: boolean;
+    isSystemApp: boolean;
+  }>;
+}
+

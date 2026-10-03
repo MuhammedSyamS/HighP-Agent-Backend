@@ -38,3 +38,87 @@ export const DEFAULT_APP_CATEGORIES: IAppCategory[] = [
     apps: ['chrome', 'google chrome', 'firefox', 'msedge', 'edge', 'brave', 'safari', 'opera']
   }
 ];
+
+export const STANDARD_APPLICATION_CATEGORIES = [
+  'Development',
+  'Design',
+  'Communication',
+  'Browsers',
+  'Productivity',
+  'Marketing',
+  'Project Management',
+  'File Management',
+  'Media',
+  'Other'
+] as const;
+
+export const DEFAULT_REGISTRY_APPLICATIONS = [
+  // Development
+  { name: 'Visual Studio Code', executableNames: ['code.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Cursor', executableNames: ['cursor.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Visual Studio', executableNames: ['devenv.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'IntelliJ IDEA', executableNames: ['idea64.exe', 'idea.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'WebStorm', executableNames: ['webstorm64.exe', 'webstorm.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Android Studio', executableNames: ['studio64.exe', 'studio.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'PyCharm', executableNames: ['pycharm64.exe', 'pycharm.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Git', executableNames: ['git.exe', 'git-bash.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'GitHub Desktop', executableNames: ['githubdesktop.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Antigravity IDE', executableNames: ['antigravity.exe', 'antigravity ide.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Windows Terminal', executableNames: ['windowsterminal.exe', 'powershell.exe', 'cmd.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Postman', executableNames: ['postman.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'DBeaver', executableNames: ['dbeaver.exe'], category: 'Development', tracked: true, ignored: false, isSystemApp: false },
+
+  // Design
+  { name: 'Figma', executableNames: ['figma.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Adobe Photoshop', executableNames: ['photoshop.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Adobe Illustrator', executableNames: ['illustrator.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Adobe Premiere Pro', executableNames: ['premiere.exe', 'premierepro.exe', 'adobe premiere pro.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Adobe After Effects', executableNames: ['afterfx.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Canva', executableNames: ['canva.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Blender', executableNames: ['blender.exe'], category: 'Design', tracked: true, ignored: false, isSystemApp: false },
+
+  // Communication
+  { name: 'Slack', executableNames: ['slack.exe'], category: 'Communication', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Microsoft Teams', executableNames: ['teams.exe', 'ms-teams.exe'], category: 'Communication', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Discord', executableNames: ['discord.exe'], category: 'Communication', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Zoom', executableNames: ['zoom.exe'], category: 'Communication', tracked: true, ignored: false, isSystemApp: false },
+
+  // Browsers
+  { name: 'Google Chrome', executableNames: ['chrome.exe'], category: 'Browsers', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Microsoft Edge', executableNames: ['msedge.exe'], category: 'Browsers', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Mozilla Firefox', executableNames: ['firefox.exe'], category: 'Browsers', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Brave', executableNames: ['brave.exe'], category: 'Browsers', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Opera', executableNames: ['opera.exe'], category: 'Browsers', tracked: true, ignored: false, isSystemApp: false },
+
+  // Productivity
+  { name: 'Notion', executableNames: ['notion.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Microsoft Word', executableNames: ['winword.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Microsoft Excel', executableNames: ['excel.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Microsoft PowerPoint', executableNames: ['powerpnt.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Microsoft Outlook', executableNames: ['outlook.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Notepad', executableNames: ['notepad.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Notepad++', executableNames: ['notepad++.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Obsidian', executableNames: ['obsidian.exe'], category: 'Productivity', tracked: true, ignored: false, isSystemApp: false },
+
+  // Project Management
+  { name: 'Jira', executableNames: ['jira.exe'], category: 'Project Management', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Trello', executableNames: ['trello.exe'], category: 'Project Management', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'ClickUp', executableNames: ['clickup.exe'], category: 'Project Management', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Asana', executableNames: ['asana.exe'], category: 'Project Management', tracked: true, ignored: false, isSystemApp: false },
+
+  // Marketing
+  { name: 'Google Ads', executableNames: ['googleads.exe', 'google-ads.exe'], category: 'Marketing', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Google Analytics', executableNames: ['googleanalytics.exe'], category: 'Marketing', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'Meta Business Suite', executableNames: ['metabusiness.exe', 'meta business suite.exe'], category: 'Marketing', tracked: true, ignored: false, isSystemApp: false },
+
+  // File Management
+  { name: 'Windows File Explorer', executableNames: ['explorer.exe'], category: 'File Management', tracked: true, ignored: false, isSystemApp: false },
+  { name: 'OneDrive', executableNames: ['onedrive.exe'], category: 'File Management', tracked: true, ignored: false, isSystemApp: false },
+
+  // Media
+  { name: 'Spotify', executableNames: ['spotify.exe', 'spotifylauncher.exe', 'spotify_cli.exe'], category: 'Media', tracked: false, ignored: true, isSystemApp: false },
+  { name: 'VLC Media Player', executableNames: ['vlc.exe'], category: 'Media', tracked: false, ignored: true, isSystemApp: false },
+
+  // Internal / System
+  { name: 'HighP Agent', executableNames: ['highp agent.exe', 'highptelemetrynative.exe', 'electron.exe'], category: 'Other', tracked: false, ignored: true, isSystemApp: true }
+];

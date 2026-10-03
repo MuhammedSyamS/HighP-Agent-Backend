@@ -7,12 +7,14 @@ import {
   getAgentConfig,
   startAgentSession,
   endAgentSession,
-  getAgentHealth
+  getAgentHealth,
+  getAgentApplicationConfig,
+  recordDiscoveredApplication
 } from '../controllers/agentController';
 import { authenticateAgent } from '../middleware/auth';
 import { enforceTenant } from '../middleware/tenant';
 import { validate } from '../middleware/validate';
-import { AgentRegisterSchema, AgentHeartbeatSchema, AgentSyncSchema } from '../shared';
+import { AgentRegisterSchema, AgentHeartbeatSchema, AgentSyncSchema, ReportDiscoveredAppSchema } from '../shared';
 
 const router = Router();
 
@@ -27,5 +29,9 @@ router.post('/sync', validate(AgentSyncSchema), syncOfflineEvents);
 router.get('/configuration', getAgentConfig);
 router.post('/session/start', startAgentSession);
 router.post('/session/end', endAgentSession);
+
+// Application Registry Sync & Discovery for Agent
+router.get('/applications/config', getAgentApplicationConfig);
+router.post('/applications/discovered', validate(ReportDiscoveredAppSchema), recordDiscoveredApplication);
 
 export default router;

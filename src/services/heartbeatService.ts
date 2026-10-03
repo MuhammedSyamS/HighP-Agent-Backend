@@ -1,9 +1,13 @@
 import mongoose from 'mongoose';
-import { ActivityState } from '../shared';
+import { ActivityState, ActivityEventType } from '../shared';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Device } from '../models/Device';
 import { Company } from '../models/Company';
+import { TrackedApplication } from '../models/TrackedApplication';
+import { DiscoveredApplication } from '../models/DiscoveredApplication';
+import { ActivityEvent } from '../models/ActivityEvent';
+import { ApplicationUsage } from '../models/ApplicationUsage';
 import { emitToCompany } from '../realtime/socketManager';
 import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { liveTelemetryService } from './liveTelemetryService';
@@ -87,7 +91,47 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     isDesktopActive = !!recentDesktop;
   }
 
-  const cleanApp = (currentApplication || '').trim();
+  let cleanApp = (currentApplication || '').trim();
+  const exeLower = (executable || '').trim().toLowerCase();
+
+  // Query Application Registry to check tracking state
+  let trackedDoc = null;
+  if (cleanApp || exeLower) {
+    trackedDoc = await TrackedApplication.findOne({
+      companyId: new mongoose.Types.ObjectId(companyId),
+      $or: [
+        { name: new RegExp(`^${cleanApp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        { executableNames: exeLower }
+      ]
+    }).lean();
+  }
+
+  const isExplicitlyIgnored = trackedDoc ? (trackedDoc.ignored || !trackedDoc.tracked) : false;
+  const isTracked = trackedDoc ? Boolean(trackedDoc.tracked && !trackedDoc.ignored) : false;
+
+  // If application is unknown and not system, record in DiscoveredApplication
+  if (!trackedDoc && exeLower && exeLower.endsWith('.exe') && !cleanApp.toLowerCase().includes('highp')) {
+    DiscoveredApplication.findOneAndUpdate(
+      { companyId: new mongoose.Types.ObjectId(companyId), executableName: exeLower },
+      {
+        $setOnInsert: {
+          companyId: new mongoose.Types.ObjectId(companyId),
+          executableName: exeLower,
+          executablePath: '',
+          windowTitle: cleanApp || exeLower,
+          status: 'DISCOVERED',
+          firstSeenAt: now
+        },
+        $set: { lastSeenAt: now }
+      },
+      { upsert: true }
+    ).catch(() => {});
+  }
+
+  if (isExplicitlyIgnored || !isTracked) {
+    cleanApp = '';
+  }
+
   const isValidApp =
     cleanApp &&
     !cleanApp.toLowerCase().includes('highp') &&
@@ -113,7 +157,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   if (isDesktop) {
     // Desktop agent is authoritative
     profile.currentStatus = status;
-    if (isValidApp) {
+    if (isValidApp && isTracked) {
       if (profile.currentApplication !== cleanApp) {
         profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
       } else if (!profile.currentAppStartedAt) {
@@ -126,10 +170,11 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       profile.currentExecutable = '';
       profile.currentAppStartedAt = undefined;
     } else {
-      // Active but unknown or empty app: clear stale application identity
       profile.currentApplication = cleanApp || '';
       profile.currentExecutable = executable || '';
-      profile.currentAppStartedAt = undefined;
+      if (!cleanApp) {
+        profile.currentAppStartedAt = undefined;
+      }
     }
 
     if (status === ActivityState.ACTIVE) {
@@ -145,7 +190,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     // Web Presence: Only update if no desktop agent has reported recently
     if (!isDesktopActive) {
       profile.currentStatus = status;
-      if (isValidApp) {
+      if (isValidApp && isTracked) {
         if (profile.currentApplication !== cleanApp) {
           profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
         } else if (!profile.currentAppStartedAt) {
@@ -160,7 +205,9 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       } else {
         profile.currentApplication = cleanApp || '';
         profile.currentExecutable = executable || '';
-        profile.currentAppStartedAt = undefined;
+        if (!cleanApp) {
+          profile.currentAppStartedAt = undefined;
+        }
       }
       if (status === ActivityState.ACTIVE) {
         profile.lastActiveAt = now;
@@ -216,7 +263,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     );
   }
 
-  // Update In-Memory Live Telemetry State and Broadcast
+  // Compute live duration
   const effectiveApp = profile.currentStatus === ActivityState.ACTIVE ? profile.currentApplication || null : null;
   const effectiveStartedAt = profile.currentAppStartedAt ? profile.currentAppStartedAt.toISOString() : (startedAt || null);
   const effectiveDuration = activeDurationSeconds != null
@@ -225,9 +272,94 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     ? Math.max(0, Math.round((now.getTime() - profile.currentAppStartedAt.getTime()) / 1000))
     : 0;
 
-  console.log(`[BACKEND]\napplication=${effectiveApp}`);
-  console.log(`[SOCKET]\napplication=${effectiveApp}`);
+  // Persist Live Ongoing Activity Session to MongoDB (guarantees F5 refresh persistence)
+  if (isValidApp && isTracked && profile.currentStatus === ActivityState.ACTIVE && profile.currentSessionId) {
+    const appStart = profile.currentAppStartedAt ? new Date(profile.currentAppStartedAt) : now;
+    const durSeconds = Math.max(1, effectiveDuration);
 
+    try {
+      // Find or update the ongoing ACTIVE event for this specific app session
+      const ongoingEvent = await ActivityEvent.findOne({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        employeeId: profile._id,
+        sessionId: profile.currentSessionId,
+        applicationName: cleanApp,
+        status: 'ACTIVE'
+      }).sort({ startedAt: -1 });
+
+      if (ongoingEvent) {
+        ongoingEvent.lastSeenAt = now;
+        ongoingEvent.endedAt = now;
+        ongoingEvent.durationSeconds = Math.max(ongoingEvent.durationSeconds, durSeconds);
+        if (trackedDoc?._id) ongoingEvent.applicationId = trackedDoc._id as mongoose.Types.ObjectId;
+        if (trackedDoc?.category) ongoingEvent.category = trackedDoc.category;
+        if (pid) ongoingEvent.processId = pid;
+        await ongoingEvent.save();
+      } else {
+        // Close other active events for this employee if they switched
+        await ActivityEvent.updateMany(
+          {
+            companyId: new mongoose.Types.ObjectId(companyId),
+            employeeId: profile._id,
+            status: 'ACTIVE'
+          },
+          { $set: { status: 'COMPLETED' } }
+        );
+
+        const liveEventId = `live-${profile._id}-${cleanApp.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now()}`;
+        await ActivityEvent.create({
+          eventId: liveEventId,
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          sessionId: profile.currentSessionId,
+          ...(profile.currentDeviceId && { deviceId: profile.currentDeviceId }),
+          ...(trackedDoc?._id && { applicationId: trackedDoc._id as mongoose.Types.ObjectId }),
+          type: ActivityEventType.APPLICATION_FOCUS,
+          applicationName: cleanApp,
+          processName: profile.currentExecutable || executable || 'unknown.exe',
+          category: trackedDoc?.category || 'Other',
+          processId: pid || undefined,
+          windowTitleSanitized: windowTitle || cleanApp,
+          startedAt: appStart,
+          lastSeenAt: now,
+          endedAt: now,
+          durationSeconds: durSeconds,
+          status: 'ACTIVE'
+        });
+      }
+
+      // Persist into ApplicationUsage
+      await ApplicationUsage.findOneAndUpdate(
+        {
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          date: todayStr,
+          applicationName: cleanApp
+        },
+        {
+          $max: { totalSeconds: durSeconds },
+          $set: { category: trackedDoc?.category || 'Other', lastUsedAt: now }
+        },
+        { upsert: true }
+      );
+    } catch (persistErr: any) {
+      console.warn('[HeartbeatService] Live activity persistence warning:', persistErr.message);
+    }
+  } else if (profile.currentStatus !== ActivityState.ACTIVE) {
+    // If transitioned away from ACTIVE, mark previous ACTIVE events as COMPLETED
+    try {
+      await ActivityEvent.updateMany(
+        {
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          status: 'ACTIVE'
+        },
+        { $set: { status: 'COMPLETED' } }
+      );
+    } catch {}
+  }
+
+  // Update In-Memory Live Telemetry State and Broadcast
   liveTelemetryService.setLiveTelemetry({
     employeeProfileId: profile._id.toString(),
     companyId: companyId.toString(),
@@ -256,7 +388,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     source: isDesktop ? 'DESKTOP' : isDesktopActive ? 'DESKTOP' : 'WEB'
   });
 
-  if (isValidApp && profile.currentStatus === ActivityState.ACTIVE) {
+  if (isValidApp && isTracked && profile.currentStatus === ActivityState.ACTIVE) {
     emitToCompany(companyId, 'employee:activity_changed', {
       companyId,
       employeeId: profile._id.toString(),

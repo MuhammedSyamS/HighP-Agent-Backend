@@ -9,6 +9,7 @@
     "dev": "node --watch-path=src -r ts-node/register/transpile-only src/server.ts",
     "start": "node dist/server.js",
     "test": "ts-node src/scripts/test-suite.ts",
+    "test:app-tracking": "ts-node src/scripts/test-application-tracking.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

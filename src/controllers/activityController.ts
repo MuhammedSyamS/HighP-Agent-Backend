@@ -5,6 +5,8 @@ import { ActivityEvent } from '../models/ActivityEvent';
 import { AppError } from '../middleware/errorHandler';
 import { UserRole, ActivityState } from '../shared';
 
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export const getTimeline = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { employeeId } = req.params;
@@ -34,7 +36,7 @@ export const getTimeline = async (req: Request, res: Response, next: NextFunctio
 
 export const getRecentActivity = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { employeeId, limit = '20' } = req.query;
+    const { employeeId, application, category, status, date, limit = '50' } = req.query;
     const query: any = {
       companyId: new mongoose.Types.ObjectId(req.companyId),
       applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
@@ -42,8 +44,26 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
 
     if (req.user?.role === UserRole.EMPLOYEE) {
       query.employeeId = new mongoose.Types.ObjectId(req.user.employeeProfileId);
-    } else if (employeeId) {
+    } else if (employeeId && employeeId !== 'ALL') {
       query.employeeId = new mongoose.Types.ObjectId(employeeId as string);
+    }
+
+    if (category && category !== 'ALL') {
+      query.category = category as string;
+    }
+
+    if (application && application !== 'ALL') {
+      query.applicationName = new RegExp(escapeRegex(application as string), 'i');
+    }
+
+    if (status && status !== 'ALL') {
+      query.status = status as string;
+    }
+
+    if (date) {
+      const startOfDay = new Date(`${date}T00:00:00.000Z`);
+      const endOfDay = new Date(`${date}T23:59:59.999Z`);
+      query.startedAt = { $gte: startOfDay, $lte: endOfDay };
     }
 
     const events: any[] = await ActivityEvent.find(query)
@@ -83,7 +103,7 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
         (e: any) =>
           e.employeeId?._id?.toString() === emp._id.toString() &&
           e.applicationName?.toLowerCase() === cleanApp.toLowerCase() &&
-          Date.now() - new Date(e.endedAt || e.startedAt).getTime() < 180000
+          (e.status === 'ACTIVE' || Date.now() - new Date(e.endedAt || e.startedAt).getTime() < 300000)
       );
 
       const usageDoc = await mongoose.model('ApplicationUsage').findOne({
@@ -95,10 +115,13 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
 
       if (existingMatch) {
         existingMatch.isLiveNow = true;
-        if (usageDoc?.totalSeconds && usageDoc.totalSeconds > existingMatch.durationSeconds) {
+        if (usageDoc?.totalSeconds && usageDoc.totalSeconds > (existingMatch.durationSeconds || 0)) {
           existingMatch.todayTotalSeconds = usageDoc.totalSeconds;
         }
       } else {
+        const elapsedSec = emp.lastActiveAt
+          ? Math.max(5, Math.round((Date.now() - new Date(emp.lastActiveAt).getTime()) / 1000))
+          : 15;
         const appStart = emp.currentAppStartedAt ? new Date(emp.currentAppStartedAt) : null;
         const liveDuration = appStart && !isNaN(appStart.getTime())
           ? Math.max(1, Math.round((Date.now() - appStart.getTime()) / 1000))
@@ -122,6 +145,13 @@ export const getRecentActivity = async (req: Request, res: Response, next: NextF
             userId: emp.userId
           }
         });
+      }
+    }
+
+    // Also mark any ACTIVE event directly from ActivityEvent as live
+    for (const evt of events) {
+      if (evt.status === 'ACTIVE') {
+        evt.isLiveNow = true;
       }
     }
 

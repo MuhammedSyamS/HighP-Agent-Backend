@@ -72,3 +72,18 @@ export enum AuditAction {
   CONFIG_UPDATED = 'CONFIG_UPDATED',
   SESSION_MANUAL_END = 'SESSION_MANUAL_END'
 }
+
+export enum ApplicationCategory {
+  ALL = 'All',
+  DEVELOPMENT = 'Development',
+  DESIGN = 'Design',
+  COMMUNICATION = 'Communication',
+  BROWSERS = 'Browsers',
+  PRODUCTIVITY = 'Productivity',
+  MARKETING = 'Marketing',
+  PROJECT_MANAGEMENT = 'Project Management',
+  FILE_MANAGEMENT = 'File Management',
+  MEDIA = 'Media',
+  OTHER = 'Other'
+}
+

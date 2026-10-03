@@ -10,3 +10,6 @@ export * from './Device';
 export * from './AuditLog';
 export * from './Subscription';
 export * from './DailySummary';
+export * from './TrackedApplication';
+export * from './DiscoveredApplication';
+

@@ -6,6 +6,9 @@ import { Company } from '../models/Company';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Device } from '../models/Device';
+import { TrackedApplication } from '../models/TrackedApplication';
+import { DiscoveredApplication } from '../models/DiscoveredApplication';
+import { applicationRegistryService } from './applicationRegistryService';
 import { emitToCompany } from '../realtime/socketManager';
 import { getDayRangeInTimezone, getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
@@ -86,7 +89,6 @@ export const ingestActivityEvents = async (
     const dateStr = getDateStringInTimezone(started, companyTz);
     const duration = Math.max(0, event.durationSeconds || Math.round((ended.getTime() - started.getTime()) / 1000));
     const cleanAppName = event.applicationName.trim() || 'Unknown Application';
-    const category = determineCategory(cleanAppName, categories);
 
     try {
       // 1. Idempotency check: verify if eventId already processed for this company
@@ -97,17 +99,6 @@ export const ingestActivityEvents = async (
       if (existing) {
         duplicates.push(event.eventId);
         continue;
-      }
-
-      // If still no session, create one fallback session
-      if (!resolvedSessionId) {
-        const fallbackSession = await AttendanceSession.create({
-          companyId: new mongoose.Types.ObjectId(companyId),
-          employeeId: new mongoose.Types.ObjectId(employeeId),
-          startedAt: started,
-          status: SessionStatus.ACTIVE
-        });
-        resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
       }
 
       // Filter out self-monitoring / internal agent spam events
@@ -121,10 +112,81 @@ export const ingestActivityEvents = async (
         lowerApp === 'unknown' ||
         lowerApp === 'unknown application'
       ) {
-        // Skip inserting or counting self/unknown agent activity as a tracked application
         accepted.push(event.eventId);
         continue;
       }
+
+      // 2. Independently verify Application Registry configuration (Security Test Section 23)
+      const exeName = (event.processName || '').trim().toLowerCase();
+      let trackedDoc = await TrackedApplication.findOne({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        $or: [
+          { name: new RegExp(`^${cleanAppName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+          { executableNames: exeName }
+        ]
+      }).lean();
+
+      if (!trackedDoc) {
+        await applicationRegistryService.seedDefaultApplications(companyId);
+        trackedDoc = await TrackedApplication.findOne({
+          companyId: new mongoose.Types.ObjectId(companyId),
+          $or: [
+            { name: new RegExp(`^${cleanAppName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+            { executableNames: exeName }
+          ]
+        }).lean();
+      }
+
+      if (!trackedDoc) {
+        // Application is UNKNOWN: report discovery to admin and do NOT create ActivityEvent
+        if (exeName && exeName.endsWith('.exe')) {
+          await DiscoveredApplication.findOneAndUpdate(
+            { companyId: new mongoose.Types.ObjectId(companyId), executableName: exeName },
+            {
+              $setOnInsert: {
+                companyId: new mongoose.Types.ObjectId(companyId),
+                executableName: exeName,
+                executablePath: '',
+                windowTitle: cleanAppName,
+                status: 'DISCOVERED',
+                firstSeenAt: started
+              },
+              $set: { lastSeenAt: ended }
+            },
+            { upsert: true }
+          ).catch(() => {});
+        }
+        accepted.push(event.eventId);
+        continue;
+      }
+
+      if (trackedDoc.ignored || !trackedDoc.tracked) {
+        // App is IGNORED by administrator policy: do not record employee activity
+        accepted.push(event.eventId);
+        continue;
+      }
+
+      const category = trackedDoc.category || determineCategory(cleanAppName, categories);
+
+      // If still no session, create one fallback session
+      if (!resolvedSessionId) {
+        const fallbackSession = await AttendanceSession.create({
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: new mongoose.Types.ObjectId(employeeId),
+          startedAt: started,
+          status: SessionStatus.ACTIVE
+        });
+        resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
+      }
+
+      // Remove any temporary live placeholder event for this session & app to prevent duplicates
+      await ActivityEvent.deleteMany({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        employeeId: new mongoose.Types.ObjectId(employeeId),
+        sessionId: resolvedSessionId,
+        applicationName: cleanAppName,
+        eventId: { $regex: /^live-/ }
+      });
 
       // Check if previous event in the same session is the exact same application and continuous (gap <= 120s)
       const lastSessionEvent = await ActivityEvent.findOne({
@@ -140,9 +202,12 @@ export const ingestActivityEvents = async (
         Math.abs(started.getTime() - lastSessionEvent.endedAt.getTime()) <= 120000;
 
       if (isContinuous) {
-        // Coalesce into existing interval: increase its time and extend endedAt!
+        // Coalesce into existing interval: increase its time and extend endedAt
         lastSessionEvent.endedAt = ended > lastSessionEvent.endedAt ? ended : lastSessionEvent.endedAt;
         lastSessionEvent.durationSeconds += duration;
+        lastSessionEvent.status = 'COMPLETED';
+        if (trackedDoc?._id) lastSessionEvent.applicationId = trackedDoc._id as mongoose.Types.ObjectId;
+        if (category) lastSessionEvent.category = category;
         await lastSessionEvent.save();
       } else {
         // Insert new distinct activity interval
@@ -152,13 +217,16 @@ export const ingestActivityEvents = async (
           employeeId: new mongoose.Types.ObjectId(employeeId),
           sessionId: resolvedSessionId,
           ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
+          ...(trackedDoc?._id && { applicationId: trackedDoc._id as mongoose.Types.ObjectId }),
           type: event.type,
           applicationName: cleanAppName,
           processName: event.processName,
+          category,
           windowTitleSanitized: event.windowTitleSanitized,
           startedAt: started,
           endedAt: ended,
-          durationSeconds: duration
+          durationSeconds: duration,
+          status: 'COMPLETED'
         });
       }
 

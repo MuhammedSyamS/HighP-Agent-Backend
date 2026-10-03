@@ -8,6 +8,7 @@ import { DeviceStatus, ActivityState } from '../shared';
 import { processHeartbeat } from '../services/heartbeatService';
 import { ingestActivityEvents } from '../services/activityService';
 import { startWorkSession, endWorkSession } from '../services/sessionService';
+import { applicationRegistryService } from '../services/applicationRegistryService';
 import { AppError } from '../middleware/errorHandler';
 
 export const registerDevice = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -300,3 +301,38 @@ export const getAgentHealth = async (req: Request, res: Response, next: NextFunc
     next(error);
   }
 };
+
+export const getAgentApplicationConfig = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const clientVersion = req.query.version ? Number(req.query.version) : undefined;
+    const config = await applicationRegistryService.getAgentConfig(req.companyId!, clientVersion);
+    res.status(200).json({
+      success: true,
+      data: config
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const recordDiscoveredApplication = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const employeeId = req.user?.employeeProfileId;
+    const { executableName, executablePath, windowTitle } = req.body;
+
+    const recorded = await applicationRegistryService.recordDiscoveredApp(
+      req.companyId!,
+      employeeId,
+      { executableName, executablePath, windowTitle }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Discovered application recorded',
+      data: recorded
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

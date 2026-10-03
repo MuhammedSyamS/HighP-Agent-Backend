@@ -1,9 +1,10 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { ApplicationUsage } from '../models/ApplicationUsage';
 import { Company } from '../models/Company';
 import { AppError } from '../middleware/errorHandler';
 import { UserRole } from '../shared';
+import { applicationRegistryService } from '../services/applicationRegistryService';
 
 export const getCompanyApplicationUsage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -121,6 +122,148 @@ export const getEmployeeApplicationUsage = async (req: Request, res: Response, n
         totalTime,
         applications: results
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// Application Registry Controllers
+// ==========================================
+
+export const getRegistryApplications = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { category, search, tracked } = req.query;
+    const trackedBool = tracked !== undefined ? tracked === 'true' : undefined;
+
+    const apps = await applicationRegistryService.getApplications(req.companyId!, {
+      category: category as string,
+      search: search as string,
+      tracked: trackedBool
+    });
+
+    res.status(200).json({
+      success: true,
+      data: apps
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createRegistryApplication = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { name, category, executableNames, executablePaths, tracked, ignored, isSystemApp } = req.body;
+    const created = await applicationRegistryService.addApplication(req.companyId!, {
+      name,
+      category,
+      executableNames,
+      executablePaths,
+      tracked,
+      ignored,
+      isSystemApp
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Application added to registry successfully',
+      data: created
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateRegistryApplication = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const updated = await applicationRegistryService.updateApplication(req.companyId!, id, req.body);
+
+    res.status(200).json({
+      success: true,
+      message: 'Application updated successfully',
+      data: updated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteRegistryApplication = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    await applicationRegistryService.deleteApplication(req.companyId!, id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Application removed from registry'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const toggleRegistryApplicationTracking = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { tracked } = req.body;
+
+    const updated = await applicationRegistryService.toggleTracking(req.companyId!, id, Boolean(tracked));
+
+    res.status(200).json({
+      success: true,
+      message: `Application tracking set to ${tracked ? 'ENABLED' : 'DISABLED'}`,
+      data: updated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getDiscoveredApplications = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const apps = await applicationRegistryService.getDiscoveredApplications(req.companyId!);
+
+    res.status(200).json({
+      success: true,
+      data: apps
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const convertDiscoveredApplication = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { name, category, tracked, ignored } = req.body;
+
+    const converted = await applicationRegistryService.convertDiscovered(req.companyId!, id, {
+      name,
+      category,
+      tracked: tracked !== undefined ? Boolean(tracked) : true,
+      ignored: ignored !== undefined ? Boolean(ignored) : false
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Discovered application configured successfully',
+      data: converted
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const dismissDiscoveredApplication = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    await applicationRegistryService.dismissDiscovered(req.companyId!, id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Discovered application dismissed'
     });
   } catch (error) {
     next(error);

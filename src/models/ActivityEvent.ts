@@ -1,4 +1,4 @@
-﻿import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from 'mongoose';
 import { ActivityEventType } from '../shared';
 
 export interface IActivityEventDocument extends Document {
@@ -7,13 +7,18 @@ export interface IActivityEventDocument extends Document {
   employeeId: mongoose.Types.ObjectId;
   sessionId: mongoose.Types.ObjectId;
   deviceId?: mongoose.Types.ObjectId;
+  applicationId?: mongoose.Types.ObjectId;
   type: ActivityEventType;
   applicationName: string;
   processName?: string;
+  category?: string;
+  processId?: number;
   windowTitleSanitized?: string;
   startedAt: Date;
+  lastSeenAt?: Date;
   endedAt: Date;
   durationSeconds: number;
+  status?: string;
   createdAt: Date;
 }
 
@@ -24,13 +29,18 @@ const ActivityEventSchema = new Schema<IActivityEventDocument>(
     employeeId: { type: Schema.Types.ObjectId, ref: 'EmployeeProfile', required: true, index: true },
     sessionId: { type: Schema.Types.ObjectId, ref: 'AttendanceSession', required: true, index: true },
     deviceId: { type: Schema.Types.ObjectId, ref: 'Device' },
+    applicationId: { type: Schema.Types.ObjectId, ref: 'TrackedApplication' },
     type: { type: String, enum: Object.values(ActivityEventType), default: ActivityEventType.APPLICATION_FOCUS },
     applicationName: { type: String, required: true, trim: true },
     processName: { type: String, trim: true },
+    category: { type: String, trim: true, default: 'Other' },
+    processId: { type: Number },
     windowTitleSanitized: { type: String, trim: true },
     startedAt: { type: Date, required: true },
+    lastSeenAt: { type: Date },
     endedAt: { type: Date, required: true },
-    durationSeconds: { type: Number, required: true, min: 0 }
+    durationSeconds: { type: Number, required: true, min: 0 },
+    status: { type: String, default: 'ACTIVE' }
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
@@ -40,5 +50,6 @@ ActivityEventSchema.index({ companyId: 1, eventId: 1 }, { unique: true });
 ActivityEventSchema.index({ companyId: 1, employeeId: 1, startedAt: -1 });
 ActivityEventSchema.index({ companyId: 1, sessionId: 1, startedAt: 1 });
 ActivityEventSchema.index({ companyId: 1, applicationName: 1, startedAt: -1 });
+ActivityEventSchema.index({ companyId: 1, category: 1, startedAt: -1 });
 
 export const ActivityEvent = mongoose.model<IActivityEventDocument>('ActivityEvent', ActivityEventSchema);

@@ -110,3 +110,41 @@ export const AgentSyncSchema = z.object({
     })
   ).max(500)
 });
+
+export const CreateTrackedApplicationSchema = z.object({
+  name: z.string().min(1, 'Application name is required').max(100),
+  category: z.string().min(1, 'Category is required'),
+  executableNames: z.array(z.string().min(1)).min(1, 'At least one executable name is required'),
+  executablePaths: z.array(z.string()).optional(),
+  tracked: z.boolean().default(true),
+  ignored: z.boolean().default(false),
+  isSystemApp: z.boolean().default(false)
+});
+
+export const UpdateTrackedApplicationSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  category: z.string().min(1).optional(),
+  executableNames: z.array(z.string().min(1)).optional(),
+  executablePaths: z.array(z.string()).optional(),
+  tracked: z.boolean().optional(),
+  ignored: z.boolean().optional(),
+  isSystemApp: z.boolean().optional()
+});
+
+export const ToggleApplicationTrackingSchema = z.object({
+  tracked: z.boolean()
+});
+
+export const ReportDiscoveredAppSchema = z.object({
+  executableName: z.string().min(1),
+  executablePath: z.string().optional(),
+  windowTitle: z.string().optional()
+});
+
+export const ConvertDiscoveredApplicationSchema = z.object({
+  name: z.string().min(1).optional(),
+  category: z.string().default('Other'),
+  tracked: z.boolean().default(true),
+  ignored: z.boolean().default(false)
+});
+
