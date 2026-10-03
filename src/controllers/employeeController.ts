@@ -9,9 +9,10 @@ import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
 import { AuditAction, UserStatus, UserRole, ActivityState, IDashboardOverview } from '../shared';
-import { liveTelemetryService } from '../services/liveTelemetryService';
-import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { DailySummary } from '../models/DailySummary';
+import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { Company } from '../models/Company';
+import { liveTelemetryService } from '../services/liveTelemetryService';
 
 
 export const getEmployees = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -49,11 +50,72 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       });
     }
 
-    // Ensure currentApplication strictly reflects active status, never stale historical events
+    // 1. Fetch company timezone and today's date
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const todayStr = getDateStringInTimezone(new Date(), companyTz);
+
+    // 2. Fetch today's aggregated ApplicationUsage per employee
+    const appUsages = await ApplicationUsage.aggregate([
+      {
+        $match: {
+          companyId: new mongoose.Types.ObjectId(req.companyId),
+          date: todayStr
+        }
+      },
+      {
+        $group: {
+          _id: '$employeeId',
+          totalAppSeconds: { $sum: '$totalSeconds' }
+        }
+      }
+    ]);
+    const appUsageMap = new Map<string, number>();
+    for (const au of appUsages) {
+      if (au._id) appUsageMap.set(au._id.toString(), au.totalAppSeconds || 0);
+    }
+
+    // 3. Fetch today's DailySummary per employee
+    const dailySummaries = await DailySummary.find({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      date: todayStr
+    }).lean();
+    const summaryMap = new Map<string, any>();
+    for (const ds of dailySummaries) {
+      if (ds.employeeId) summaryMap.set(ds.employeeId.toString(), ds);
+    }
+
+    // 4. Ensure currentApplication strictly reflects active status and reconcile active work times
     for (const p of results as any[]) {
-      if (p.currentStatus !== ActivityState.ACTIVE) {
+      const pIdStr = p._id.toString();
+      const appSec = appUsageMap.get(pIdStr) || 0;
+      const sumDoc = summaryMap.get(pIdStr);
+      const sumActive = sumDoc?.activeSeconds || 0;
+      const sumIdle = sumDoc?.idleSeconds || 0;
+      const sumBreak = sumDoc?.breakSeconds || 0;
+      const cachedActive = p.todayActiveSeconds || 0;
+      const cachedIdle = p.todayIdleSeconds || 0;
+      const cachedBreak = p.todayBreakSeconds || 0;
+
+      let activeSec = Math.max(cachedActive, sumActive, appSec);
+
+      if (p.currentStatus === ActivityState.ACTIVE) {
+        if (p.currentAppStartedAt) {
+          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.currentAppStartedAt).getTime()) / 1000));
+          activeSec += ongoingSec;
+        } else if (p.lastActiveAt) {
+          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.lastActiveAt).getTime()) / 1000));
+          if (ongoingSec > 0 && ongoingSec < 3600) {
+            activeSec += ongoingSec;
+          }
+        }
+      } else {
         p.currentApplication = '';
       }
+
+      p.todayActiveSeconds = activeSec;
+      p.todayIdleSeconds = Math.max(cachedIdle, sumIdle);
+      p.todayBreakSeconds = Math.max(cachedBreak, sumBreak);
     }
 
     res.status(200).json({
@@ -120,6 +182,40 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     })
       .sort({ totalSeconds: -1 })
       .lean();
+
+    // Reconcile active work time for this profile
+    const appSec = topApps.reduce((acc, a) => acc + (a.totalSeconds || 0), 0);
+    const summaryDoc = await DailySummary.findOne({
+      companyId: req.companyId,
+      employeeId: profile._id,
+      date: todayStr
+    }).lean();
+    const sumActive = summaryDoc?.activeSeconds || 0;
+    const sumIdle = summaryDoc?.idleSeconds || 0;
+    const sumBreak = summaryDoc?.breakSeconds || 0;
+    const cachedActive = (profile as any).todayActiveSeconds || 0;
+    const cachedIdle = (profile as any).todayIdleSeconds || 0;
+    const cachedBreak = (profile as any).todayBreakSeconds || 0;
+
+    let activeSec = Math.max(cachedActive, sumActive, appSec);
+
+    if (profile.currentStatus === ActivityState.ACTIVE) {
+      if (profile.currentAppStartedAt) {
+        const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(profile.currentAppStartedAt).getTime()) / 1000));
+        activeSec += ongoingSec;
+      } else if (profile.lastActiveAt) {
+        const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(profile.lastActiveAt).getTime()) / 1000));
+        if (ongoingSec > 0 && ongoingSec < 3600) {
+          activeSec += ongoingSec;
+        }
+      }
+    } else {
+      profile.currentApplication = '';
+    }
+
+    (profile as any).todayActiveSeconds = activeSec;
+    (profile as any).todayIdleSeconds = Math.max(cachedIdle, sumIdle);
+    (profile as any).todayBreakSeconds = Math.max(cachedBreak, sumBreak);
 
     res.status(200).json({
       success: true,
@@ -319,15 +415,70 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
     let totalIdleSecondsToday = 0;
     let totalBreakSecondsToday = 0;
 
+    const company = await Company.findById(companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const todayStr = getDateStringInTimezone(new Date(), companyTz);
+
+    const appUsages = await ApplicationUsage.aggregate([
+      {
+        $match: {
+          companyId,
+          date: todayStr
+        }
+      },
+      {
+        $group: {
+          _id: '$employeeId',
+          totalAppSeconds: { $sum: '$totalSeconds' }
+        }
+      }
+    ]);
+    const appUsageMap = new Map<string, number>();
+    for (const au of appUsages) {
+      if (au._id) appUsageMap.set(au._id.toString(), au.totalAppSeconds || 0);
+    }
+
+    const dailySummaries = await DailySummary.find({
+      companyId,
+      date: todayStr
+    }).lean();
+    const summaryMap = new Map<string, any>();
+    for (const ds of dailySummaries) {
+      if (ds.employeeId) summaryMap.set(ds.employeeId.toString(), ds);
+    }
+
     for (const p of profiles) {
       if (p.currentStatus === ActivityState.ACTIVE) activeNow++;
       else if (p.currentStatus === ActivityState.IDLE) idleNow++;
       else if (p.currentStatus === ActivityState.BREAK) onBreakNow++;
       else offlineNow++;
 
-      totalActiveSecondsToday += p.todayActiveSeconds || 0;
-      totalIdleSecondsToday += p.todayIdleSeconds || 0;
-      totalBreakSecondsToday += p.todayBreakSeconds || 0;
+      const pIdStr = p._id.toString();
+      const appSec = appUsageMap.get(pIdStr) || 0;
+      const sumDoc = summaryMap.get(pIdStr);
+      const sumActive = sumDoc?.activeSeconds || 0;
+      const sumIdle = sumDoc?.idleSeconds || 0;
+      const sumBreak = sumDoc?.breakSeconds || 0;
+      const cachedActive = p.todayActiveSeconds || 0;
+      const cachedIdle = p.todayIdleSeconds || 0;
+      const cachedBreak = p.todayBreakSeconds || 0;
+
+      let activeSec = Math.max(cachedActive, sumActive, appSec);
+      if (p.currentStatus === ActivityState.ACTIVE) {
+        if (p.currentAppStartedAt) {
+          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.currentAppStartedAt).getTime()) / 1000));
+          activeSec += ongoingSec;
+        } else if (p.lastActiveAt) {
+          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.lastActiveAt).getTime()) / 1000));
+          if (ongoingSec > 0 && ongoingSec < 3600) {
+            activeSec += ongoingSec;
+          }
+        }
+      }
+
+      totalActiveSecondsToday += activeSec;
+      totalIdleSecondsToday += Math.max(cachedIdle, sumIdle);
+      totalBreakSecondsToday += Math.max(cachedBreak, sumBreak);
     }
 
     const overview: IDashboardOverview = {
