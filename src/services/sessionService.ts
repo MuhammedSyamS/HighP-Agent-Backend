@@ -30,6 +30,22 @@ export const startWorkSession = async (
     }
   }
 
+  // Also check if an active work session is already open for this employee
+  const existingActive = await AttendanceSession.findOne({
+    companyId: new mongoose.Types.ObjectId(companyId),
+    employeeId: profile._id,
+    status: SessionStatus.ACTIVE
+  }).sort({ startedAt: -1 });
+
+  if (existingActive) {
+    profile.currentSessionId = existingActive._id;
+    profile.currentStatus = ActivityState.ACTIVE;
+    profile.lastActiveAt = new Date();
+    profile.lastHeartbeatAt = new Date();
+    await profile.save();
+    return existingActive;
+  }
+
   let resolvedDeviceId: mongoose.Types.ObjectId | undefined;
   if (deviceId) {
     if (typeof deviceId === 'string' && /^[0-9a-fA-F]{24}$/.test(deviceId)) {

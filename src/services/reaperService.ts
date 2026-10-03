@@ -8,9 +8,10 @@ import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 
 let reaperInterval: NodeJS.Timeout | null = null;
 
-export const checkStaleSessions = async () => {
+export const checkStaleSessions = async (targetCompanyId?: string) => {
   try {
-    const companies = await Company.find().select('_id config').lean();
+    const filter = targetCompanyId ? { _id: targetCompanyId } : {};
+    const companies = await Company.find(filter).select('_id config').lean();
 
     for (const company of companies) {
       const heartbeatSec = company.config?.heartbeatIntervalSeconds || 30;
@@ -26,42 +27,7 @@ export const checkStaleSessions = async () => {
       });
 
       for (const employee of staleEmployees) {
-        const disconnectTime = employee.lastHeartbeatAt || new Date();
-
-        // If employee had an open attendance session, gracefully close it at disconnectTime
-        if (employee.currentSessionId) {
-          try {
-            const session = await AttendanceSession.findOne({
-              _id: employee.currentSessionId,
-              companyId: company._id,
-              status: SessionStatus.ACTIVE
-            });
-
-            if (session) {
-              session.endedAt = disconnectTime;
-              session.status = SessionStatus.COMPLETED;
-              session.endReason = 'Stale Disconnect (Heartbeat Timeout)';
-              await session.save();
-
-              const companyTz = company.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
-              const disconnectDateStr = getDateStringInTimezone(disconnectTime, companyTz);
-              await rebuildEmployeeDay(company._id.toString(), employee._id.toString(), disconnectDateStr);
-
-              emitToCompany(company._id.toString(), 'employee:session_ended', {
-                companyId: company._id.toString(),
-                employeeId: employee._id.toString(),
-                sessionId: session._id.toString(),
-                endedAt: disconnectTime.toISOString(),
-                totalActiveSeconds: session.activeSeconds,
-                endReason: session.endReason
-              });
-            }
-          } catch (sessionErr) {
-            console.error('[ReaperService] Error closing stale session:', sessionErr);
-          }
-          employee.currentSessionId = undefined;
-        }
-
+        // Disconnect only updates presence status to OFFLINE; work sessions remain OPEN until explicit End Work
         employee.currentStatus = ActivityState.OFFLINE;
         employee.currentApplication = '';
         await employee.save();

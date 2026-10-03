@@ -5,6 +5,7 @@ import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { ActivityEvent } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
+import { WebsiteActivity } from '../models/WebsiteActivity';
 import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
@@ -109,8 +110,10 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
             activeSec += ongoingSec;
           }
         }
+        p.currentWebsite = p.currentWebsiteDomain ? { domain: p.currentWebsiteDomain } : null;
       } else {
         p.currentApplication = '';
+        p.currentWebsite = null;
       }
 
       p.todayActiveSeconds = activeSec;
@@ -183,6 +186,14 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
       .sort({ totalSeconds: -1 })
       .lean();
 
+    const topWebsites = await WebsiteActivity.find({
+      companyId: req.companyId,
+      employeeId: profile._id,
+      date: todayStr
+    })
+      .sort({ totalSeconds: -1 })
+      .lean();
+
     // Reconcile active work time for this profile
     const appSec = topApps.reduce((acc, a) => acc + (a.totalSeconds || 0), 0);
     const summaryDoc = await DailySummary.findOne({
@@ -223,7 +234,8 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
         profile,
         currentSession,
         devices,
-        topApps
+        topApps,
+        topWebsites
       }
     });
   } catch (error) {

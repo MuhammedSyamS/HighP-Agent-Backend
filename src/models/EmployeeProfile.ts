@@ -13,6 +13,8 @@ export interface IEmployeeProfileDocument extends Document {
   currentStatus: ActivityState;
   currentApplication?: string;
   currentExecutable?: string;
+  currentWebsiteDomain?: string;
+  currentWebsiteStartedAt?: Date;
   currentAppStartedAt?: Date;
   lastActiveAt?: Date;
   lastHeartbeatAt?: Date;
@@ -37,6 +39,8 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfileDocument>(
     currentStatus: { type: String, enum: Object.values(ActivityState), default: ActivityState.OFFLINE },
     currentApplication: { type: String, default: '' },
     currentExecutable: { type: String, default: '' },
+    currentWebsiteDomain: { type: String, default: '' },
+    currentWebsiteStartedAt: { type: Date },
     currentAppStartedAt: { type: Date },
     lastActiveAt: { type: Date },
     lastHeartbeatAt: { type: Date },

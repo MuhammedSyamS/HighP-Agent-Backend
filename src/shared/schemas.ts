@@ -92,22 +92,24 @@ export const AgentHeartbeatSchema = z.object({
   status: z.nativeEnum(ActivityState),
   currentApplication: z.string().optional(),
   idleSeconds: z.number().min(0),
-  recentDurationSeconds: z.number().min(0).optional()
-});
+  recentDurationSeconds: z.number().min(0).optional(),
+  website: z.object({ domain: z.string() }).nullable().optional()
+}).passthrough();
 
 export const AgentSyncSchema = z.object({
   deviceId: z.string().min(1),
   sessionId: z.string().min(1),
   events: z.array(
     z.object({
-      eventId: z.string().uuid(),
+      eventId: z.string().min(1),
       type: z.nativeEnum(ActivityEventType),
       applicationName: z.string().min(1),
       processName: z.string().optional(),
       startedAt: z.string(),
       endedAt: z.string(),
-      durationSeconds: z.number().min(0)
-    })
+      durationSeconds: z.number().min(0),
+      domain: z.string().optional()
+    }).passthrough()
   ).max(500)
 });
 

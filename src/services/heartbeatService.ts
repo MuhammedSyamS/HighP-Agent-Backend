@@ -28,6 +28,7 @@ export interface HeartbeatParams {
   idleSeconds: number;
   recentDurationSeconds?: number;
   windowTitle?: string | null;
+  website?: { domain?: string } | null;
   ipAddress?: string;
 }
 
@@ -47,6 +48,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     activeDurationSeconds,
     windowTitle,
     idleSeconds,
+    website,
     ipAddress
   } = params;
 
@@ -176,6 +178,11 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
 
     if (status === ActivityState.ACTIVE) {
       profile.lastActiveAt = now;
+      if (website?.domain) {
+        profile.currentWebsiteDomain = website.domain;
+      }
+    } else {
+      profile.currentWebsiteDomain = '';
     }
 
     // Link device if not linked yet
@@ -379,6 +386,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     status: profile.currentStatus,
     currentApplication: profile.currentApplication,
     currentTrackingState: trackingState,
+    currentWebsite: profile.currentWebsiteDomain ? { domain: profile.currentWebsiteDomain } : null,
     executable: profile.currentExecutable,
     lastActiveAt: profile.lastActiveAt?.toISOString(),
     todayActiveSeconds: profile.todayActiveSeconds,
@@ -387,7 +395,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     source: isDesktop ? 'DESKTOP' : isDesktopActive ? 'DESKTOP' : 'WEB'
   });
 
-  // Dedicated Section 13 event: agent:current-application
+  // Dedicated Section 13 event: agent:current-application with website correlation
   emitToCompany(companyId, 'agent:current-application', {
     companyId,
     employeeId: profile._id.toString(),
@@ -398,6 +406,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       category: trackedDoc?.category || 'Other',
       trackingState
     },
+    website: profile.currentWebsiteDomain ? { domain: profile.currentWebsiteDomain } : null,
     timestamp: now.toISOString()
   });
 
@@ -407,6 +416,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       employeeId: profile._id.toString(),
       currentApplication: profile.currentApplication,
       trackingState,
+      website: profile.currentWebsiteDomain ? { domain: profile.currentWebsiteDomain } : null,
       startedAt: effectiveStartedAt,
       durationSeconds: effectiveDuration,
       timestamp: now.toISOString()

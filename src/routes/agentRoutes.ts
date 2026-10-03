@@ -7,6 +7,7 @@ import {
   getAgentConfig,
   startAgentSession,
   endAgentSession,
+  getCurrentAgentSession,
   getAgentHealth,
   getAgentApplicationConfig,
   recordDiscoveredApplication
@@ -27,6 +28,7 @@ router.post('/heartbeat', validate(AgentHeartbeatSchema), heartbeat);
 router.post('/activity', recordActivity);
 router.post('/sync', validate(AgentSyncSchema), syncOfflineEvents);
 router.get('/configuration', getAgentConfig);
+router.get('/session/current', getCurrentAgentSession);
 router.post('/session/start', startAgentSession);
 router.post('/session/end', endAgentSession);
 

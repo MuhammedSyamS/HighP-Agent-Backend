@@ -4,7 +4,8 @@ import { Device } from '../models/Device';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { Company } from '../models/Company';
 import { ActivityEvent } from '../models/ActivityEvent';
-import { DeviceStatus, ActivityState } from '../shared';
+import { AttendanceSession } from '../models/AttendanceSession';
+import { DeviceStatus, ActivityState, SessionStatus } from '../shared';
 import { processHeartbeat } from '../services/heartbeatService';
 import { ingestActivityEvents } from '../services/activityService';
 import { startWorkSession, endWorkSession } from '../services/sessionService';
@@ -225,6 +226,44 @@ export const endAgentSession = async (req: Request, res: Response, next: NextFun
 
     const { sessionId, endReason = 'Agent Session End' } = req.body;
     const session = await endWorkSession(req.companyId!, employeeId, sessionId, endReason);
+
+    res.status(200).json({
+      success: true,
+      data: session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getCurrentAgentSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const employeeId = req.user?.employeeProfileId;
+    if (!employeeId) {
+      throw new AppError('No employee profile found', 400);
+    }
+
+    const profile = await EmployeeProfile.findOne({
+      _id: new mongoose.Types.ObjectId(employeeId),
+      companyId: new mongoose.Types.ObjectId(req.companyId)
+    }).lean();
+
+    let session = null;
+    if (profile?.currentSessionId) {
+      session = await AttendanceSession.findOne({
+        _id: profile.currentSessionId,
+        companyId: req.companyId,
+        status: SessionStatus.ACTIVE
+      }).lean();
+    }
+
+    if (!session) {
+      session = await AttendanceSession.findOne({
+        employeeId: new mongoose.Types.ObjectId(employeeId),
+        companyId: new mongoose.Types.ObjectId(req.companyId),
+        status: SessionStatus.ACTIVE
+      }).sort({ startedAt: -1 }).lean();
+    }
 
     res.status(200).json({
       success: true,

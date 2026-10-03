@@ -18,6 +18,7 @@ export interface IActivityEventDocument extends Document {
   lastSeenAt?: Date;
   endedAt: Date;
   durationSeconds: number;
+  domain?: string;
   status?: string;
   createdAt: Date;
 }
@@ -36,6 +37,7 @@ const ActivityEventSchema = new Schema<IActivityEventDocument>(
     category: { type: String, trim: true, default: 'Other' },
     processId: { type: Number },
     windowTitleSanitized: { type: String, trim: true },
+    domain: { type: String, trim: true },
     startedAt: { type: Date, required: true },
     lastSeenAt: { type: Date },
     endedAt: { type: Date, required: true },

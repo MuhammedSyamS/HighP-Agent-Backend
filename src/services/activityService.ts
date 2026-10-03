@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { ActivityEventType, ActivityState, SessionStatus } from '../shared';
 import { ActivityEvent, IActivityEventDocument } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
+import { WebsiteActivity } from '../models/WebsiteActivity';
 import { Company } from '../models/Company';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
@@ -21,6 +22,7 @@ export interface IngestEventInput {
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
+  domain?: string;
 }
 
 export const determineCategory = (appName: string, companyCategories: Array<{ name: string; color: string; apps: string[] }>): string => {
@@ -223,6 +225,7 @@ export const ingestActivityEvents = async (
           processName: event.processName,
           category,
           windowTitleSanitized: event.windowTitleSanitized,
+          domain: event.domain,
           startedAt: started,
           endedAt: ended,
           durationSeconds: duration,
@@ -245,6 +248,23 @@ export const ingestActivityEvents = async (
           },
           { upsert: true, new: true }
         );
+
+        // 3. Aggregate into Daily Website Usage if domain is present
+        if (event.domain) {
+          await WebsiteActivity.findOneAndUpdate(
+            {
+              companyId: new mongoose.Types.ObjectId(companyId),
+              employeeId: new mongoose.Types.ObjectId(employeeId),
+              date: dateStr,
+              domain: event.domain.toLowerCase().trim()
+            },
+            {
+              $inc: { totalSeconds: duration },
+              $set: { browser: cleanAppName, lastUsedAt: ended, sessionId: resolvedSessionId }
+            },
+            { upsert: true, new: true }
+          );
+        }
       }
 
       accepted.push(event.eventId);
