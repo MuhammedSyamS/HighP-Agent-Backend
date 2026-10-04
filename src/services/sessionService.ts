@@ -219,7 +219,10 @@ export const startBreak = async (
     companyId,
     employeeId: profile._id.toString(),
     status: ActivityState.BREAK,
-    currentApplication: 'On Break'
+    currentApplication: 'On Break',
+    todayActiveSeconds: profile.todayActiveSeconds,
+    todayIdleSeconds: profile.todayIdleSeconds,
+    todayBreakSeconds: profile.todayBreakSeconds
   });
 
   return breakRecord;
@@ -253,7 +256,7 @@ export const endBreak = async (
   await breakRecord.save();
 
   // Accumulate to today's break total and session break total
-  profile.todayBreakSeconds += breakRecord.durationSeconds;
+  profile.todayBreakSeconds = (profile.todayBreakSeconds || 0) + breakRecord.durationSeconds;
   profile.currentStatus = ActivityState.ACTIVE;
   profile.lastActiveAt = now;
   await profile.save();
@@ -277,7 +280,10 @@ export const endBreak = async (
     companyId,
     employeeId: profile._id.toString(),
     status: ActivityState.ACTIVE,
-    currentApplication: profile.currentApplication
+    currentApplication: profile.currentApplication,
+    todayActiveSeconds: profile.todayActiveSeconds,
+    todayIdleSeconds: profile.todayIdleSeconds,
+    todayBreakSeconds: profile.todayBreakSeconds
   });
 
   return breakRecord;

@@ -11,6 +11,7 @@ import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
 import { AuditAction, UserStatus, UserRole, ActivityState, IDashboardOverview } from '../shared';
 import { DailySummary } from '../models/DailySummary';
+import { Break } from '../models/Break';
 import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { Company } from '../models/Company';
 import { liveTelemetryService } from '../services/liveTelemetryService';
@@ -113,6 +114,19 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       sessionBreakMap.set(empKey, (sessionBreakMap.get(empKey) || 0) + sBreak);
     }
 
+    // 3c. Fetch ongoing breaks to calculate live elapsed break time
+    const ongoingBreaks = await Break.find({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      endedAt: { $exists: false }
+    }).lean();
+    const ongoingBreakMap = new Map<string, number>();
+    for (const b of ongoingBreaks) {
+      if (b.employeeId && b.startedAt) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(b.startedAt).getTime()) / 1000));
+        ongoingBreakMap.set(b.employeeId.toString(), elapsed);
+      }
+    }
+
     // 4. Ensure currentApplication strictly reflects active status and reconcile active work times
     for (const p of results as any[]) {
       const pIdStr = p._id.toString();
@@ -127,6 +141,7 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       const sessActive = sessionActiveMap.get(pIdStr) || 0;
       const sessIdle = sessionIdleMap.get(pIdStr) || 0;
       const sessBreak = sessionBreakMap.get(pIdStr) || 0;
+      const ongoingBreakSec = ongoingBreakMap.get(pIdStr) || 0;
 
       let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
@@ -148,7 +163,7 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
 
       p.todayActiveSeconds = activeSec;
       p.todayIdleSeconds = Math.max(cachedIdle, sumIdle, sessIdle);
-      p.todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak);
+      p.todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak) + (p.currentStatus === ActivityState.BREAK ? ongoingBreakSec : 0);
     }
 
     res.status(200).json({
@@ -267,9 +282,19 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
       profile.currentApplication = '';
     }
 
+    // Check for ongoing break to display live break time
+    const ongoingBreak = await Break.findOne({
+      companyId: req.companyId,
+      employeeId: profile._id,
+      endedAt: { $exists: false }
+    }).lean();
+    const ongoingBreakSec = (ongoingBreak && ongoingBreak.startedAt)
+      ? Math.max(0, Math.floor((Date.now() - new Date(ongoingBreak.startedAt).getTime()) / 1000))
+      : 0;
+
     (profile as any).todayActiveSeconds = activeSec;
     (profile as any).todayIdleSeconds = Math.max(cachedIdle, sumIdle, sessIdle);
-    (profile as any).todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak);
+    (profile as any).todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak) + (profile.currentStatus === ActivityState.BREAK ? ongoingBreakSec : 0);
 
     res.status(200).json({
       success: true,
@@ -528,6 +553,18 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
       sessionBreakMap.set(empKey, (sessionBreakMap.get(empKey) || 0) + sBreak);
     }
 
+    const ongoingBreaks = await Break.find({
+      companyId,
+      endedAt: { $exists: false }
+    }).lean();
+    const ongoingBreakMap = new Map<string, number>();
+    for (const b of ongoingBreaks) {
+      if (b.employeeId && b.startedAt) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(b.startedAt).getTime()) / 1000));
+        ongoingBreakMap.set(b.employeeId.toString(), elapsed);
+      }
+    }
+
     for (const p of profiles) {
       if (p.currentStatus === ActivityState.ACTIVE) activeNow++;
       else if (p.currentStatus === ActivityState.IDLE) idleNow++;
@@ -546,6 +583,7 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
       const sessActive = sessionActiveMap.get(pIdStr) || 0;
       const sessIdle = sessionIdleMap.get(pIdStr) || 0;
       const sessBreak = sessionBreakMap.get(pIdStr) || 0;
+      const ongoingBreakSec = ongoingBreakMap.get(pIdStr) || 0;
 
       let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
       if (p.currentStatus === ActivityState.ACTIVE) {
@@ -562,7 +600,7 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
 
       totalActiveSecondsToday += activeSec;
       totalIdleSecondsToday += Math.max(cachedIdle, sumIdle, sessIdle);
-      totalBreakSecondsToday += Math.max(cachedBreak, sumBreak, sessBreak);
+      totalBreakSecondsToday += Math.max(cachedBreak, sumBreak, sessBreak) + (p.currentStatus === ActivityState.BREAK ? ongoingBreakSec : 0);
     }
 
     const overview: IDashboardOverview = {

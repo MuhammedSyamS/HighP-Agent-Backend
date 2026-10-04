@@ -103,6 +103,51 @@ export const ingestActivityEvents = async (
         continue;
       }
 
+      // If still no session, create one fallback session
+      if (!resolvedSessionId) {
+        const fallbackSession = await AttendanceSession.create({
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: new mongoose.Types.ObjectId(employeeId),
+          startedAt: started,
+          status: SessionStatus.ACTIVE
+        });
+        resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
+      }
+
+      // Handle IDLE_INTERVAL directly without requiring TrackedApplication registry match
+      if (event.type === ActivityEventType.IDLE_INTERVAL) {
+        await ActivityEvent.create({
+          eventId: event.eventId,
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: new mongoose.Types.ObjectId(employeeId),
+          sessionId: resolvedSessionId,
+          ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
+          type: ActivityEventType.IDLE_INTERVAL,
+          applicationName: 'System Idle',
+          processName: 'idle',
+          category: 'Other',
+          startedAt: started,
+          endedAt: ended,
+          durationSeconds: duration,
+          status: 'COMPLETED'
+        });
+
+        if (resolvedSessionId) {
+          await AttendanceSession.updateOne(
+            { _id: resolvedSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+            { $inc: { idleSeconds: duration } }
+          );
+        }
+
+        await EmployeeProfile.updateOne(
+          { _id: new mongoose.Types.ObjectId(employeeId) },
+          { $inc: { todayIdleSeconds: duration } }
+        );
+
+        accepted.push(event.eventId);
+        continue;
+      }
+
       // Filter out self-monitoring / internal agent spam events
       const lowerApp = cleanAppName.toLowerCase();
       if (
@@ -169,17 +214,6 @@ export const ingestActivityEvents = async (
       }
 
       const category = trackedDoc.category || determineCategory(cleanAppName, categories);
-
-      // If still no session, create one fallback session
-      if (!resolvedSessionId) {
-        const fallbackSession = await AttendanceSession.create({
-          companyId: new mongoose.Types.ObjectId(companyId),
-          employeeId: new mongoose.Types.ObjectId(employeeId),
-          startedAt: started,
-          status: SessionStatus.ACTIVE
-        });
-        resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
-      }
 
       // Remove any temporary live placeholder event for this session & app to prevent duplicates
       await ActivityEvent.deleteMany({
@@ -248,6 +282,13 @@ export const ingestActivityEvents = async (
           },
           { upsert: true, new: true }
         );
+
+        if (resolvedSessionId) {
+          await AttendanceSession.updateOne(
+            { _id: resolvedSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+            { $inc: { activeSeconds: duration } }
+          );
+        }
 
         // 3. Aggregate into Daily Website Usage if domain is present
         if (event.domain) {

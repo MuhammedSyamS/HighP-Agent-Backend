@@ -8,8 +8,9 @@ import { TrackedApplication } from '../models/TrackedApplication';
 import { DiscoveredApplication } from '../models/DiscoveredApplication';
 import { ActivityEvent } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
+import { Break } from '../models/Break';
 import { emitToCompany } from '../realtime/socketManager';
-import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { liveTelemetryService } from './liveTelemetryService';
 
 export interface HeartbeatParams {
@@ -364,6 +365,63 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       );
     } catch {}
   }
+
+  // If employee is on BREAK, calculate live break duration from ongoing break record
+    if (profile.currentStatus === ActivityState.BREAK) {
+      try {
+        const ongoingBreak = await Break.findOne({
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          endedAt: { $exists: false }
+        }).sort({ startedAt: -1 });
+
+        if (ongoingBreak && ongoingBreak.startedAt) {
+          const ongoingSec = Math.max(0, Math.floor((now.getTime() - new Date(ongoingBreak.startedAt).getTime()) / 1000));
+          const todayRange = getDayRangeInTimezone(todayStr, companyTz);
+          const completedBreaks = await Break.find({
+            companyId: new mongoose.Types.ObjectId(companyId),
+            employeeId: profile._id,
+            endedAt: { $exists: true, $ne: null },
+            startedAt: { $gte: todayRange.start, $lte: todayRange.end }
+          }).lean();
+          const completedSec = completedBreaks.reduce((sum, b) => sum + (b.durationSeconds || 0), 0);
+          profile.todayBreakSeconds = completedSec + ongoingSec;
+          await profile.save();
+        }
+      } catch (err: any) {
+        console.warn('[HeartbeatService] Live break calculation warning:', err.message);
+      }
+    }
+
+    // If employee is IDLE, accumulate delta idle time
+    if (profile.currentStatus === ActivityState.IDLE) {
+      const deltaIdle = params.recentDurationSeconds || (params.idleSeconds > 0 ? 15 : 0);
+      if (deltaIdle > 0) {
+        profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + deltaIdle;
+        await profile.save();
+        if (profile.currentSessionId) {
+          await AttendanceSession.updateOne(
+            { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+            { $inc: { idleSeconds: deltaIdle } }
+          );
+        }
+      }
+    }
+
+    // If employee is ACTIVE, ensure todayActiveSeconds keeps pace
+    if (profile.currentStatus === ActivityState.ACTIVE) {
+      const deltaActive = params.recentDurationSeconds || 15;
+      if (deltaActive > 0) {
+        profile.todayActiveSeconds = (profile.todayActiveSeconds || 0) + deltaActive;
+        await profile.save();
+        if (profile.currentSessionId) {
+          await AttendanceSession.updateOne(
+            { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+            { $inc: { activeSeconds: deltaActive } }
+          );
+        }
+      }
+    }
 
   // Update In-Memory Live Telemetry State and Broadcast
   liveTelemetryService.setLiveTelemetry({

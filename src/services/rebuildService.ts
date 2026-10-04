@@ -99,7 +99,13 @@ export const rebuildEmployeeDay = async (
     startedAt: { $gte: startOfDay, $lte: endOfDay }
   }).lean();
 
-  const totalBreakSeconds = breaks.reduce((acc, b) => acc + (b.durationSeconds || 0), 0);
+  const totalBreakSeconds = breaks.reduce((acc, b) => {
+    let dur = b.durationSeconds || 0;
+    if (!b.endedAt && b.startedAt) {
+      dur = Math.max(dur, Math.round((Date.now() - new Date(b.startedAt).getTime()) / 1000));
+    }
+    return acc + dur;
+  }, 0);
 
   // 5. Fetch AttendanceSessions for first/last timestamps
   const sessions = await AttendanceSession.find({
