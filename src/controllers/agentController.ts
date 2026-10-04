@@ -95,7 +95,8 @@ export const heartbeat = async (req: Request, res: Response, next: NextFunction)
       activeDurationSeconds,
       windowTitle,
       idleSeconds,
-      recentDurationSeconds
+      recentDurationSeconds,
+      website
     } = req.body;
 
     // Verify device status is not revoked
@@ -122,6 +123,7 @@ export const heartbeat = async (req: Request, res: Response, next: NextFunction)
       windowTitle,
       idleSeconds,
       recentDurationSeconds,
+      website,
       ipAddress: req.ip
     });
 

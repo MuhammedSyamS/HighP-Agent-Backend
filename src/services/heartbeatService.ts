@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { ActivityState, ActivityEventType } from '../shared';
+import { ActivityState, ActivityEventType, SessionStatus } from '../shared';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { Device } from '../models/Device';
@@ -153,10 +153,12 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   // Always update heartbeat timestamp to keep worker online
   profile.lastHeartbeatAt = now;
 
+  console.log(`[BACKEND_HEARTBEAT] employee=${employeeId} application=${cleanApp || 'None'} website=${website?.domain || 'None'} status=${status}`);
+
   if (isDesktop) {
     // Desktop agent is authoritative
     profile.currentStatus = status;
-    if (isValidApp && isTracked) {
+    if (isValidApp) {
       if (profile.currentApplication !== cleanApp) {
         profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
       } else if (!profile.currentAppStartedAt) {
@@ -178,8 +180,10 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
 
     if (status === ActivityState.ACTIVE) {
       profile.lastActiveAt = now;
-      if (website?.domain) {
+      if (website && website.domain) {
         profile.currentWebsiteDomain = website.domain;
+      } else {
+        profile.currentWebsiteDomain = '';
       }
     } else {
       profile.currentWebsiteDomain = '';
@@ -194,7 +198,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     // Web Presence: Only update if no desktop agent has reported recently
     if (!isDesktopActive) {
       profile.currentStatus = status;
-      if (isValidApp && isTracked) {
+      if (isValidApp) {
         if (profile.currentApplication !== cleanApp) {
           profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
         } else if (!profile.currentAppStartedAt) {
@@ -229,27 +233,25 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     );
   }
 
-  // Ensure active session linkage if employee is actively working
+  // Section 7: If employee is working without an active session ID in memory, look up existing open session
   if (profile.currentStatus === ActivityState.ACTIVE && !profile.currentSessionId) {
-    let activeSession = await AttendanceSession.findOne({
+    const activeSession = await AttendanceSession.findOne({
       companyId,
       employeeId: profile._id,
+      status: SessionStatus.ACTIVE,
       endedAt: { $exists: false }
     }).sort({ startedAt: -1 });
 
     if (!activeSession) {
-      activeSession = await AttendanceSession.create({
-        companyId,
-        employeeId: profile._id,
-        startedAt: now,
-        lastHeartbeatAt: now,
-        source: isDesktop ? 'DESKTOP' : 'WEB',
-        activeSeconds: 0,
-        idleSeconds: 0,
-        breakSeconds: 0
-      });
+      console.log('[HEARTBEAT] No active work session for employee:', profile._id.toString());
+      // Section 7: DO NOT create a new session automatically! The employee must explicitly start work.
+    } else {
+      profile.currentSessionId = activeSession._id as mongoose.Types.ObjectId;
+      await AttendanceSession.updateOne(
+        { _id: activeSession._id, companyId },
+        { $set: { lastHeartbeatAt: now } }
+      );
     }
-    profile.currentSessionId = activeSession._id as mongoose.Types.ObjectId;
   }
 
   await profile.save();
