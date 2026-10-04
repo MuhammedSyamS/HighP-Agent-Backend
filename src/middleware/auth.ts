@@ -76,7 +76,17 @@ export const requireRoles = (roles: UserRole[]) => {
       return;
     }
 
-    if (!roles.includes(req.user.role)) {
+    const hasAdminRequirement =
+      roles.includes(UserRole.OWNER) ||
+      roles.includes(UserRole.ADMIN) ||
+      roles.includes(UserRole.HR);
+
+    const userIsAdmin =
+      req.user.role === UserRole.OWNER ||
+      req.user.role === UserRole.ADMIN ||
+      req.user.role === UserRole.HR;
+
+    if (!roles.includes(req.user.role) && !(hasAdminRequirement && userIsAdmin)) {
       res.status(403).json({
         success: false,
         message: `Forbidden. Role '${req.user.role}' is not authorized for this resource.`

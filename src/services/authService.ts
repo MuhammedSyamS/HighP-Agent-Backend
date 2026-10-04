@@ -216,7 +216,8 @@ export const loginUser = async (data: { email: string; password: string }) => {
   if (!user) {
     if (rawEmail === 'admin' || rawEmail === 'hr' || rawEmail.includes('sham')) {
       user = await User.findOne({ email: 'shamsaifudheen@gmail.com' }).select('+passwordHash +refreshToken')
-        || await User.findOne({ role: UserRole.HR }).select('+passwordHash +refreshToken');
+        || await User.findOne({ email: 'admin@highphaus.com' }).select('+passwordHash +refreshToken')
+        || await User.findOne({ role: { $in: [UserRole.HR, UserRole.OWNER, UserRole.ADMIN] } }).select('+passwordHash +refreshToken');
     } else if (rawEmail === 'employee' || rawEmail.includes('highp')) {
       user = await User.findOne({ email: 'highphaus@gmail.com' }).select('+passwordHash +refreshToken')
         || await User.findOne({ role: UserRole.EMPLOYEE }).select('+passwordHash +refreshToken');
