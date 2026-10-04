@@ -5,7 +5,7 @@ import { connectDatabase, disconnectDatabase } from './config/database';
 import { initializeSocket } from './realtime/socketManager';
 import { startReaperService, stopReaperService } from './services/reaperService';
 
-// HighP Enterprise Backend Server - Production Ready
+// HighP Enterprise Backend Server - Running on Port 5001 with Atlas
 const startServer = async () => {
   try {
     // 1. Connect Database

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getCompanyApplicationUsage,
+  getCompanyWebsiteUsage,
   getEmployeeApplicationUsage,
   getRegistryApplications,
   createRegistryApplication,
@@ -29,6 +30,7 @@ router.use(enforceTenant);
 
 // Usage Analytics
 router.get('/usage', requireRoles([UserRole.HR, UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getCompanyApplicationUsage);
+router.get('/websites', requireRoles([UserRole.HR, UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getCompanyWebsiteUsage);
 router.get('/usage/:employeeId', getEmployeeApplicationUsage);
 
 // Application Registry CRUD

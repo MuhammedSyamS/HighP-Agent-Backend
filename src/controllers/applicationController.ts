@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { ApplicationUsage } from '../models/ApplicationUsage';
+import { WebsiteActivity } from '../models/WebsiteActivity';
 import { Company } from '../models/Company';
 import { AppError } from '../middleware/errorHandler';
 import { UserRole } from '../shared';
@@ -55,6 +56,62 @@ export const getCompanyApplicationUsage = async (req: Request, res: Response, ne
       data: {
         totalTimeOverall,
         applications: results
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getCompanyWebsiteUsage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { startDate, endDate, date } = req.query;
+    const companyId = new mongoose.Types.ObjectId(req.companyId);
+
+    const matchQuery: any = { companyId };
+    if (date) {
+      matchQuery.date = date;
+    } else if (startDate || endDate) {
+      matchQuery.date = {};
+      if (startDate) matchQuery.date.$gte = startDate;
+      if (endDate) matchQuery.date.$lte = endDate;
+    }
+
+    const aggregated = await WebsiteActivity.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: '$domain',
+          browser: { $first: '$browser' },
+          totalSeconds: { $sum: '$totalSeconds' },
+          lastUsedAt: { $max: '$lastUsedAt' },
+          employeeCount: { $addToSet: '$employeeId' }
+        }
+      },
+      {
+        $project: {
+          domain: '$_id',
+          browser: 1,
+          totalSeconds: 1,
+          lastUsedAt: 1,
+          employeeCount: { $size: '$employeeCount' }
+        }
+      },
+      { $sort: { totalSeconds: -1 } }
+    ]);
+
+    const totalTimeOverall = aggregated.reduce((acc, curr) => acc + curr.totalSeconds, 0);
+
+    const results = aggregated.map((web) => ({
+      ...web,
+      percentage: totalTimeOverall > 0 ? Math.round((web.totalSeconds / totalTimeOverall) * 100) : 0
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalTimeOverall,
+        websites: results
       }
     });
   } catch (error) {
