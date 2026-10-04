@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { ActivityState, SessionStatus } from '../shared';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
@@ -10,6 +11,11 @@ let reaperInterval: NodeJS.Timeout | null = null;
 
 export const checkStaleSessions = async (targetCompanyId?: string) => {
   try {
+    // Skip if database is currently disconnected during network recovery
+    if (mongoose.connection.readyState !== 1) {
+      return;
+    }
+
     const filter = targetCompanyId ? { _id: targetCompanyId } : {};
     const companies = await Company.find(filter).select('_id config').lean();
 
@@ -41,8 +47,12 @@ export const checkStaleSessions = async (targetCompanyId?: string) => {
         });
       }
     }
-  } catch (error) {
-    console.error('[ReaperService] Error checking stale sessions:', error);
+  } catch (error: any) {
+    if (error?.name === 'MongoServerSelectionError' || error?.code === 'ENOTFOUND') {
+      console.warn('[ReaperService] MongoDB network unavailable, will retry next cycle.');
+    } else {
+      console.error('[ReaperService] Error checking stale sessions:', error?.message || error);
+    }
   }
 };
 

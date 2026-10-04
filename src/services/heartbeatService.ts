@@ -158,28 +158,23 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
 
   if (isDesktop) {
     // Desktop agent is authoritative
+    const wasNotActive = profile.currentStatus !== ActivityState.ACTIVE;
     profile.currentStatus = status;
-    if (isValidApp) {
-      if (profile.currentApplication !== cleanApp) {
-        profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
-      } else if (!profile.currentAppStartedAt) {
-        profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
-      }
-      profile.currentApplication = cleanApp;
-      profile.currentExecutable = executable || profile.currentExecutable || '';
-    } else if (status !== ActivityState.ACTIVE) {
-      profile.currentApplication = '';
-      profile.currentExecutable = '';
-      profile.currentAppStartedAt = undefined;
-    } else {
-      profile.currentApplication = cleanApp || '';
-      profile.currentExecutable = executable || '';
-      if (!cleanApp) {
-        profile.currentAppStartedAt = undefined;
-      }
-    }
 
     if (status === ActivityState.ACTIVE) {
+      if (isValidApp) {
+        if (wasNotActive || profile.currentApplication !== cleanApp || !profile.currentAppStartedAt) {
+          profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+        }
+        profile.currentApplication = cleanApp;
+        profile.currentExecutable = executable || profile.currentExecutable || '';
+      } else {
+        profile.currentApplication = cleanApp || '';
+        profile.currentExecutable = executable || '';
+        if (!cleanApp) {
+          profile.currentAppStartedAt = undefined;
+        }
+      }
       profile.lastActiveAt = now;
       if (website && website.domain) {
         profile.currentWebsiteDomain = website.domain;
@@ -187,6 +182,10 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
         profile.currentWebsiteDomain = '';
       }
     } else {
+      // Status is IDLE, BREAK, or OFFLINE: clear active application and focus start time
+      profile.currentApplication = '';
+      profile.currentExecutable = '';
+      profile.currentAppStartedAt = undefined;
       profile.currentWebsiteDomain = '';
     }
 
@@ -198,28 +197,29 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   } else {
     // Web Presence: Only update if no desktop agent has reported recently
     if (!isDesktopActive) {
+      const wasNotActive = profile.currentStatus !== ActivityState.ACTIVE;
       profile.currentStatus = status;
-      if (isValidApp) {
-        if (profile.currentApplication !== cleanApp) {
-          profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
-        } else if (!profile.currentAppStartedAt) {
-          profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+
+      if (status === ActivityState.ACTIVE) {
+        if (isValidApp) {
+          if (wasNotActive || profile.currentApplication !== cleanApp || !profile.currentAppStartedAt) {
+            profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
+          }
+          profile.currentApplication = cleanApp;
+          profile.currentExecutable = executable || profile.currentExecutable || '';
+        } else {
+          profile.currentApplication = cleanApp || '';
+          profile.currentExecutable = executable || '';
+          if (!cleanApp) {
+            profile.currentAppStartedAt = undefined;
+          }
         }
-        profile.currentApplication = cleanApp;
-        profile.currentExecutable = executable || profile.currentExecutable || '';
-      } else if (status !== ActivityState.ACTIVE) {
+        profile.lastActiveAt = now;
+      } else {
         profile.currentApplication = '';
         profile.currentExecutable = '';
         profile.currentAppStartedAt = undefined;
-      } else {
-        profile.currentApplication = cleanApp || '';
-        profile.currentExecutable = executable || '';
-        if (!cleanApp) {
-          profile.currentAppStartedAt = undefined;
-        }
-      }
-      if (status === ActivityState.ACTIVE) {
-        profile.lastActiveAt = now;
+        profile.currentWebsiteDomain = '';
       }
     }
   }

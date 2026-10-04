@@ -146,15 +146,6 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
       if (p.currentStatus === ActivityState.ACTIVE) {
-        if (p.currentAppStartedAt) {
-          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.currentAppStartedAt).getTime()) / 1000));
-          activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
-        } else if (p.lastActiveAt) {
-          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.lastActiveAt).getTime()) / 1000));
-          if (ongoingSec > 0 && ongoingSec < 3600) {
-            activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
-          }
-        }
         p.currentWebsite = p.currentWebsiteDomain ? { domain: p.currentWebsiteDomain } : null;
       } else {
         p.currentApplication = '';
@@ -260,25 +251,11 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
       sessActive = currentSession.activeSeconds || 0;
       sessIdle = currentSession.idleSeconds || 0;
       sessBreak = currentSession.breakSeconds || 0;
-      if (currentSession.status === 'ACTIVE') {
-        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(currentSession.startedAt).getTime()) / 1000));
-        sessActive = Math.max(sessActive, elapsed - sessIdle - sessBreak);
-      }
     }
 
     let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
-    if (profile.currentStatus === ActivityState.ACTIVE) {
-      if (profile.currentAppStartedAt) {
-        const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(profile.currentAppStartedAt).getTime()) / 1000));
-        activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
-      } else if (profile.lastActiveAt) {
-        const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(profile.lastActiveAt).getTime()) / 1000));
-        if (ongoingSec > 0 && ongoingSec < 3600) {
-          activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
-        }
-      }
-    } else {
+    if (profile.currentStatus !== ActivityState.ACTIVE) {
       profile.currentApplication = '';
     }
 
@@ -586,17 +563,6 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
       const ongoingBreakSec = ongoingBreakMap.get(pIdStr) || 0;
 
       let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
-      if (p.currentStatus === ActivityState.ACTIVE) {
-        if (p.currentAppStartedAt) {
-          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.currentAppStartedAt).getTime()) / 1000));
-          activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
-        } else if (p.lastActiveAt) {
-          const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.lastActiveAt).getTime()) / 1000));
-          if (ongoingSec > 0 && ongoingSec < 3600) {
-            activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
-          }
-        }
-      }
 
       totalActiveSecondsToday += activeSec;
       totalIdleSecondsToday += Math.max(cachedIdle, sumIdle, sessIdle);
