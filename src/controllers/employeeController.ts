@@ -86,6 +86,33 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       if (ds.employeeId) summaryMap.set(ds.employeeId.toString(), ds);
     }
 
+    // 3b. Fetch today's AttendanceSessions to guarantee active work persistence
+    const todayRange = getDayRangeInTimezone(todayStr, companyTz);
+    const todaySessions = await AttendanceSession.find({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      startedAt: { $gte: todayRange.start, $lte: todayRange.end }
+    }).lean();
+    const sessionActiveMap = new Map<string, number>();
+    const sessionIdleMap = new Map<string, number>();
+    const sessionBreakMap = new Map<string, number>();
+
+    for (const sess of todaySessions) {
+      if (!sess.employeeId) continue;
+      const empKey = sess.employeeId.toString();
+      let sActive = sess.activeSeconds || 0;
+      let sIdle = sess.idleSeconds || 0;
+      let sBreak = sess.breakSeconds || 0;
+
+      if (sess.status === 'ACTIVE' && sess.startedAt) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(sess.startedAt).getTime()) / 1000));
+        sActive = Math.max(sActive, elapsed - sIdle - sBreak);
+      }
+
+      sessionActiveMap.set(empKey, (sessionActiveMap.get(empKey) || 0) + sActive);
+      sessionIdleMap.set(empKey, (sessionIdleMap.get(empKey) || 0) + sIdle);
+      sessionBreakMap.set(empKey, (sessionBreakMap.get(empKey) || 0) + sBreak);
+    }
+
     // 4. Ensure currentApplication strictly reflects active status and reconcile active work times
     for (const p of results as any[]) {
       const pIdStr = p._id.toString();
@@ -97,17 +124,20 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       const cachedActive = p.todayActiveSeconds || 0;
       const cachedIdle = p.todayIdleSeconds || 0;
       const cachedBreak = p.todayBreakSeconds || 0;
+      const sessActive = sessionActiveMap.get(pIdStr) || 0;
+      const sessIdle = sessionIdleMap.get(pIdStr) || 0;
+      const sessBreak = sessionBreakMap.get(pIdStr) || 0;
 
-      let activeSec = Math.max(cachedActive, sumActive, appSec);
+      let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
       if (p.currentStatus === ActivityState.ACTIVE) {
         if (p.currentAppStartedAt) {
           const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.currentAppStartedAt).getTime()) / 1000));
-          activeSec += ongoingSec;
+          activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
         } else if (p.lastActiveAt) {
           const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.lastActiveAt).getTime()) / 1000));
           if (ongoingSec > 0 && ongoingSec < 3600) {
-            activeSec += ongoingSec;
+            activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
           }
         }
         p.currentWebsite = p.currentWebsiteDomain ? { domain: p.currentWebsiteDomain } : null;
@@ -117,8 +147,8 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       }
 
       p.todayActiveSeconds = activeSec;
-      p.todayIdleSeconds = Math.max(cachedIdle, sumIdle);
-      p.todayBreakSeconds = Math.max(cachedBreak, sumBreak);
+      p.todayIdleSeconds = Math.max(cachedIdle, sumIdle, sessIdle);
+      p.todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak);
     }
 
     res.status(200).json({
@@ -208,16 +238,29 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     const cachedIdle = (profile as any).todayIdleSeconds || 0;
     const cachedBreak = (profile as any).todayBreakSeconds || 0;
 
-    let activeSec = Math.max(cachedActive, sumActive, appSec);
+    let sessActive = 0;
+    let sessIdle = 0;
+    let sessBreak = 0;
+    if (currentSession && currentSession.startedAt) {
+      sessActive = currentSession.activeSeconds || 0;
+      sessIdle = currentSession.idleSeconds || 0;
+      sessBreak = currentSession.breakSeconds || 0;
+      if (currentSession.status === 'ACTIVE') {
+        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(currentSession.startedAt).getTime()) / 1000));
+        sessActive = Math.max(sessActive, elapsed - sessIdle - sessBreak);
+      }
+    }
+
+    let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
     if (profile.currentStatus === ActivityState.ACTIVE) {
       if (profile.currentAppStartedAt) {
         const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(profile.currentAppStartedAt).getTime()) / 1000));
-        activeSec += ongoingSec;
+        activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
       } else if (profile.lastActiveAt) {
         const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(profile.lastActiveAt).getTime()) / 1000));
         if (ongoingSec > 0 && ongoingSec < 3600) {
-          activeSec += ongoingSec;
+          activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
         }
       }
     } else {
@@ -225,8 +268,8 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     }
 
     (profile as any).todayActiveSeconds = activeSec;
-    (profile as any).todayIdleSeconds = Math.max(cachedIdle, sumIdle);
-    (profile as any).todayBreakSeconds = Math.max(cachedBreak, sumBreak);
+    (profile as any).todayIdleSeconds = Math.max(cachedIdle, sumIdle, sessIdle);
+    (profile as any).todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak);
 
     res.status(200).json({
       success: true,
@@ -459,6 +502,32 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
       if (ds.employeeId) summaryMap.set(ds.employeeId.toString(), ds);
     }
 
+    const todayRange = getDayRangeInTimezone(todayStr, companyTz);
+    const todaySessions = await AttendanceSession.find({
+      companyId,
+      startedAt: { $gte: todayRange.start, $lte: todayRange.end }
+    }).lean();
+    const sessionActiveMap = new Map<string, number>();
+    const sessionIdleMap = new Map<string, number>();
+    const sessionBreakMap = new Map<string, number>();
+
+    for (const sess of todaySessions) {
+      if (!sess.employeeId) continue;
+      const empKey = sess.employeeId.toString();
+      let sActive = sess.activeSeconds || 0;
+      let sIdle = sess.idleSeconds || 0;
+      let sBreak = sess.breakSeconds || 0;
+
+      if (sess.status === 'ACTIVE' && sess.startedAt) {
+        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(sess.startedAt).getTime()) / 1000));
+        sActive = Math.max(sActive, elapsed - sIdle - sBreak);
+      }
+
+      sessionActiveMap.set(empKey, (sessionActiveMap.get(empKey) || 0) + sActive);
+      sessionIdleMap.set(empKey, (sessionIdleMap.get(empKey) || 0) + sIdle);
+      sessionBreakMap.set(empKey, (sessionBreakMap.get(empKey) || 0) + sBreak);
+    }
+
     for (const p of profiles) {
       if (p.currentStatus === ActivityState.ACTIVE) activeNow++;
       else if (p.currentStatus === ActivityState.IDLE) idleNow++;
@@ -474,23 +543,26 @@ export const getDashboardOverview = async (req: Request, res: Response, next: Ne
       const cachedActive = p.todayActiveSeconds || 0;
       const cachedIdle = p.todayIdleSeconds || 0;
       const cachedBreak = p.todayBreakSeconds || 0;
+      const sessActive = sessionActiveMap.get(pIdStr) || 0;
+      const sessIdle = sessionIdleMap.get(pIdStr) || 0;
+      const sessBreak = sessionBreakMap.get(pIdStr) || 0;
 
-      let activeSec = Math.max(cachedActive, sumActive, appSec);
+      let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
       if (p.currentStatus === ActivityState.ACTIVE) {
         if (p.currentAppStartedAt) {
           const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.currentAppStartedAt).getTime()) / 1000));
-          activeSec += ongoingSec;
+          activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
         } else if (p.lastActiveAt) {
           const ongoingSec = Math.max(0, Math.floor((Date.now() - new Date(p.lastActiveAt).getTime()) / 1000));
           if (ongoingSec > 0 && ongoingSec < 3600) {
-            activeSec += ongoingSec;
+            activeSec = Math.max(activeSec, appSec + ongoingSec, sessActive);
           }
         }
       }
 
       totalActiveSecondsToday += activeSec;
-      totalIdleSecondsToday += Math.max(cachedIdle, sumIdle);
-      totalBreakSecondsToday += Math.max(cachedBreak, sumBreak);
+      totalIdleSecondsToday += Math.max(cachedIdle, sumIdle, sessIdle);
+      totalBreakSecondsToday += Math.max(cachedBreak, sumBreak, sessBreak);
     }
 
     const overview: IDashboardOverview = {

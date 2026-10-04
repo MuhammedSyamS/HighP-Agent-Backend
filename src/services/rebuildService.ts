@@ -151,13 +151,14 @@ export const rebuildEmployeeDay = async (
   // 7. If date matches today in the company's timezone, synchronize live profile cache
   const todayInCompanyTz = getDateStringInTimezone(new Date(), companyTimezone);
   if (dateStr === todayInCompanyTz) {
+    const existing = await EmployeeProfile.findById(employeeObjId).lean();
     await EmployeeProfile.updateOne(
       { _id: employeeObjId, companyId: companyObjId },
       {
         $set: {
-          todayActiveSeconds: totalActiveSeconds,
-          todayIdleSeconds: totalIdleSeconds,
-          todayBreakSeconds: totalBreakSeconds,
+          todayActiveSeconds: Math.max(totalActiveSeconds, existing?.todayActiveSeconds || 0),
+          todayIdleSeconds: Math.max(totalIdleSeconds, existing?.todayIdleSeconds || 0),
+          todayBreakSeconds: Math.max(totalBreakSeconds, existing?.todayBreakSeconds || 0),
           lastDateReset: todayInCompanyTz
         }
       }
