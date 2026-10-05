@@ -99,7 +99,7 @@ export const rebuildEmployeeDay = async (
     startedAt: { $gte: startOfDay, $lte: endOfDay }
   }).lean();
 
-  const totalBreakSeconds = breaks.reduce((acc, b) => {
+  let totalBreakSeconds = breaks.reduce((acc, b) => {
     let dur = b.durationSeconds || 0;
     if (!b.endedAt && b.startedAt) {
       dur = Math.max(dur, Math.round((Date.now() - new Date(b.startedAt).getTime()) / 1000));
@@ -107,7 +107,8 @@ export const rebuildEmployeeDay = async (
     return acc + dur;
   }, 0);
 
-  // 5. Fetch AttendanceSessions for first/last timestamps
+  // 5. Fetch AttendanceSessions for first/last timestamps and authoritative bounds
+  const todayInCompanyTz = getDateStringInTimezone(new Date(), companyTimezone);
   const sessions = await AttendanceSession.find({
     companyId: companyObjId,
     employeeId: employeeObjId,
@@ -124,7 +125,39 @@ export const rebuildEmployeeDay = async (
     firstSessionStart = sessions[0].startedAt;
     const lastSess = sessions[sessions.length - 1];
     lastSessionEnd = lastSess.endedAt || undefined;
+
+    const sessActive = sessions.reduce((acc, s) => acc + Math.max(0, s.activeSeconds || 0), 0);
+    const sessIdle = sessions.reduce((acc, s) => acc + Math.max(0, s.idleSeconds || 0), 0);
+    const sessBreak = sessions.reduce((acc, s) => acc + Math.max(0, s.breakSeconds || 0), 0);
+
+    // Reconcile: sessions are authoritative for attendance hours
+    totalActiveSeconds = Math.max(totalActiveSeconds, sessActive);
+    totalIdleSeconds = Math.max(totalIdleSeconds, sessIdle);
+    totalBreakSeconds = Math.max(totalBreakSeconds, sessBreak);
+
+    // Calculate sum of individual shift durations across today's sessions
+    const nowMs = Date.now();
+    let maxPossibleShiftSeconds = 0;
+    for (const sess of sessions) {
+      const sessEndMs = sess.endedAt ? new Date(sess.endedAt).getTime() : (dateStr === todayInCompanyTz ? nowMs : new Date(sess.startedAt).getTime());
+      maxPossibleShiftSeconds += Math.max(0, Math.round((sessEndMs - new Date(sess.startedAt).getTime()) / 1000));
+    }
+
+    // Authoritative mathematical consistency: Active + Idle + Break equals total shift seconds
     totalSessionSeconds = totalActiveSeconds + totalIdleSeconds + totalBreakSeconds;
+  } else {
+    // No work sessions on this day: active, idle, and break cannot accumulate without an active session
+    totalActiveSeconds = 0;
+    totalIdleSeconds = 0;
+    totalBreakSeconds = 0;
+    totalSessionSeconds = 0;
+  }
+
+  let dailyStatus = 'ABSENT';
+  if (sessions.some((s) => s.status === 'ACTIVE')) {
+    dailyStatus = 'PRESENT_ACTIVE';
+  } else if (sessions.length > 0 || totalSessionSeconds > 0) {
+    dailyStatus = 'SHIFT_COMPLETED';
   }
 
   // 6. Upsert authoritative DailySummary record
@@ -148,23 +181,23 @@ export const rebuildEmployeeDay = async (
         activeSeconds: totalActiveSeconds,
         idleSeconds: totalIdleSeconds,
         breakSeconds: totalBreakSeconds,
+        status: dailyStatus,
+        sessionsCount: sessions.length,
         applicationUsage: summaryAppUsage
       }
     },
     { upsert: true }
   );
 
-  // 7. If date matches today in the company's timezone, synchronize live profile cache
-  const todayInCompanyTz = getDateStringInTimezone(new Date(), companyTimezone);
+  // 7. If date matches today in the company's timezone, synchronize live profile cache with authoritative values
   if (dateStr === todayInCompanyTz) {
-    const existing = await EmployeeProfile.findById(employeeObjId).lean();
     await EmployeeProfile.updateOne(
       { _id: employeeObjId, companyId: companyObjId },
       {
         $set: {
-          todayActiveSeconds: Math.max(totalActiveSeconds, existing?.todayActiveSeconds || 0),
-          todayIdleSeconds: Math.max(totalIdleSeconds, existing?.todayIdleSeconds || 0),
-          todayBreakSeconds: Math.max(totalBreakSeconds, existing?.todayBreakSeconds || 0),
+          todayActiveSeconds: totalActiveSeconds,
+          todayIdleSeconds: totalIdleSeconds,
+          todayBreakSeconds: totalBreakSeconds,
           lastDateReset: todayInCompanyTz
         }
       }

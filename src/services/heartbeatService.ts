@@ -26,6 +26,8 @@ export interface HeartbeatParams {
   pid?: number | null;
   startedAt?: string | null;
   activeDurationSeconds?: number;
+  totalActiveSeconds?: number;
+  totalIdleSeconds?: number;
   idleSeconds: number;
   recentDurationSeconds?: number;
   windowTitle?: string | null;
@@ -75,6 +77,41 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     profile.todayIdleSeconds = 0;
     profile.todayBreakSeconds = 0;
     profile.lastDateReset = todayStr;
+  }
+
+  // 1. Session Active Guard: Verify if employee has an active session
+  let activeSession: any = null;
+  const targetSessionId = sessionId || (profile.currentSessionId ? profile.currentSessionId.toString() : undefined);
+  if (targetSessionId && mongoose.Types.ObjectId.isValid(targetSessionId)) {
+    activeSession = await AttendanceSession.findOne({
+      _id: new mongoose.Types.ObjectId(targetSessionId),
+      companyId: new mongoose.Types.ObjectId(companyId)
+    });
+  }
+
+  // If the target session is completed or ended, or if profile is OFFLINE without any active session:
+  const isSessionEnded =
+    (!activeSession || activeSession.status === SessionStatus.COMPLETED || activeSession.endedAt != null) &&
+    (!profile.currentSessionId || profile.currentStatus === ActivityState.OFFLINE);
+
+  if (isSessionEnded) {
+    if (status !== ActivityState.OFFLINE) {
+      profile.currentSessionId = undefined;
+      profile.currentStatus = ActivityState.OFFLINE;
+      profile.currentApplication = '';
+      profile.currentExecutable = '';
+      profile.currentWebsiteDomain = '';
+      profile.currentAppStartedAt = undefined;
+      await profile.save();
+
+      return {
+        success: true,
+        serverTime: now.toISOString(),
+        status: ActivityState.OFFLINE,
+        sessionEnded: true,
+        message: 'Work session has ended. Telemetry tracking stopped.'
+      };
+    }
   }
 
   // Check desktop priority: if web heartbeat arrives while desktop agent is actively connected (<60s)
@@ -154,16 +191,23 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   // Always update heartbeat timestamp to keep worker online
   profile.lastHeartbeatAt = now;
 
-  console.log(`[BACKEND_HEARTBEAT] employee=${employeeId} application=${cleanApp || 'None'} website=${website?.domain || 'None'} status=${status}`);
+  const idleThresholdSec = Math.max(30, (company?.config?.idleThresholdMinutes || 1) * 60);
+  const isPhysicallyIdle = idleSeconds >= idleThresholdSec;
+  const effectiveStatus = status === ActivityState.IDLE || isPhysicallyIdle
+    ? ActivityState.IDLE
+    : status;
+
+  console.log(`[BACKEND_HEARTBEAT] employee=${employeeId} application=${cleanApp || 'None'} website=${website?.domain || 'None'} status=${effectiveStatus} idleSec=${idleSeconds}`);
+
+  const wasActive = profile.currentStatus === ActivityState.ACTIVE;
 
   if (isDesktop) {
     // Desktop agent is authoritative
-    const wasNotActive = profile.currentStatus !== ActivityState.ACTIVE;
-    profile.currentStatus = status;
+    profile.currentStatus = effectiveStatus;
 
-    if (status === ActivityState.ACTIVE) {
+    if (effectiveStatus === ActivityState.ACTIVE) {
       if (isValidApp) {
-        if (wasNotActive || profile.currentApplication !== cleanApp || !profile.currentAppStartedAt) {
+        if (!wasActive || profile.currentApplication !== cleanApp || !profile.currentAppStartedAt) {
           profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
         }
         profile.currentApplication = cleanApp;
@@ -187,6 +231,22 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       profile.currentExecutable = '';
       profile.currentAppStartedAt = undefined;
       profile.currentWebsiteDomain = '';
+
+      // If transitioning from ACTIVE to IDLE, retroactively reallocate initial idle period
+      if (wasActive && effectiveStatus === ActivityState.IDLE && params.totalActiveSeconds == null) {
+        const sessActive = Math.max(0, activeSession?.activeSeconds || 0);
+        const retroSec = Math.min(sessActive, Math.max(0, idleSeconds));
+        if (retroSec > 0) {
+          profile.todayActiveSeconds = Math.max(0, (profile.todayActiveSeconds || 0) - retroSec);
+          profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + retroSec;
+          if (profile.currentSessionId) {
+            await AttendanceSession.updateOne(
+              { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+              { $inc: { activeSeconds: -retroSec, idleSeconds: retroSec } }
+            );
+          }
+        }
+      }
     }
 
     // Link device if not linked yet
@@ -197,12 +257,11 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   } else {
     // Web Presence: Only update if no desktop agent has reported recently
     if (!isDesktopActive) {
-      const wasNotActive = profile.currentStatus !== ActivityState.ACTIVE;
-      profile.currentStatus = status;
+      profile.currentStatus = effectiveStatus;
 
-      if (status === ActivityState.ACTIVE) {
+      if (effectiveStatus === ActivityState.ACTIVE) {
         if (isValidApp) {
-          if (wasNotActive || profile.currentApplication !== cleanApp || !profile.currentAppStartedAt) {
+          if (!wasActive || profile.currentApplication !== cleanApp || !profile.currentAppStartedAt) {
             profile.currentAppStartedAt = startedAt ? new Date(startedAt) : now;
           }
           profile.currentApplication = cleanApp;
@@ -220,14 +279,28 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
         profile.currentExecutable = '';
         profile.currentAppStartedAt = undefined;
         profile.currentWebsiteDomain = '';
+
+        if (wasActive && effectiveStatus === ActivityState.IDLE && params.totalActiveSeconds == null) {
+          const sessActive = Math.max(0, activeSession?.activeSeconds || 0);
+          const retroSec = Math.min(sessActive, Math.max(0, idleSeconds));
+          if (retroSec > 0) {
+            profile.todayActiveSeconds = Math.max(0, (profile.todayActiveSeconds || 0) - retroSec);
+            profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + retroSec;
+            if (profile.currentSessionId) {
+              await AttendanceSession.updateOne(
+                { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+                { $inc: { activeSeconds: -retroSec, idleSeconds: retroSec } }
+              );
+            }
+          }
+        }
       }
     }
   }
 
-  // Maintain active session linkage
-  const effectiveSessionId = sessionId || (profile.currentSessionId ? profile.currentSessionId.toString() : undefined);
-  if (effectiveSessionId && mongoose.Types.ObjectId.isValid(effectiveSessionId)) {
-    profile.currentSessionId = new mongoose.Types.ObjectId(effectiveSessionId);
+  // Maintain active session linkage ONLY if the session is genuinely active
+  if (activeSession && activeSession.status === SessionStatus.ACTIVE && !activeSession.endedAt) {
+    profile.currentSessionId = activeSession._id as mongoose.Types.ObjectId;
     await AttendanceSession.updateOne(
       { _id: profile.currentSessionId, companyId },
       { $set: { lastHeartbeatAt: now } }
@@ -393,31 +466,70 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
       }
     }
 
-    // If employee is IDLE, accumulate delta idle time
-    if (profile.currentStatus === ActivityState.IDLE) {
-      const deltaIdle = params.recentDurationSeconds || (params.idleSeconds > 0 ? 15 : 0);
-      if (deltaIdle > 0) {
-        profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + deltaIdle;
-        await profile.save();
-        if (profile.currentSessionId) {
-          await AttendanceSession.updateOne(
-            { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
-            { $inc: { idleSeconds: deltaIdle } }
-          );
-        }
-      }
-    }
+    // Synchronize Live Active and Idle Counters
+    if (params.totalActiveSeconds != null && params.totalIdleSeconds != null) {
+      let sessActive = Math.max(0, params.totalActiveSeconds);
+      let sessIdle = Math.max(0, params.totalIdleSeconds);
 
-    // If employee is ACTIVE, ensure todayActiveSeconds keeps pace
-    if (profile.currentStatus === ActivityState.ACTIVE) {
-      const deltaActive = params.recentDurationSeconds || 15;
-      if (deltaActive > 0) {
-        profile.todayActiveSeconds = (profile.todayActiveSeconds || 0) + deltaActive;
+      if (profile.currentSessionId && activeSession?.startedAt) {
+        // Authoritative accounting constraint: active + idle + break cannot exceed elapsed shift duration
+        const elapsedSessionSec = Math.max(0, Math.round((now.getTime() - new Date(activeSession.startedAt).getTime()) / 1000));
+        const sessBreak = Math.max(0, activeSession.breakSeconds || 0);
+        const maxAllowedIdle = Math.max(0, elapsedSessionSec - sessActive - sessBreak + 30);
+        sessIdle = Math.min(sessIdle, maxAllowedIdle);
+
+        await AttendanceSession.updateOne(
+          { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+          {
+            $set: {
+              activeSeconds: sessActive,
+              idleSeconds: sessIdle,
+              lastHeartbeatAt: now
+            }
+          }
+        );
+
+        // Calculate cumulative day totals across all completed sessions today + current session
+        const todayRange = getDayRangeInTimezone(todayStr, companyTz);
+        const priorSessions = await AttendanceSession.find({
+          companyId: new mongoose.Types.ObjectId(companyId),
+          employeeId: profile._id,
+          _id: { $ne: profile.currentSessionId },
+          startedAt: { $gte: todayRange.start, $lte: todayRange.end },
+          status: SessionStatus.COMPLETED
+        }).lean();
+
+        const priorActive = priorSessions.reduce((sum, s) => sum + Math.max(0, s.activeSeconds || 0), 0);
+        const priorIdle = priorSessions.reduce((sum, s) => sum + Math.max(0, s.idleSeconds || 0), 0);
+
+        profile.todayActiveSeconds = priorActive + sessActive;
+        profile.todayIdleSeconds = priorIdle + sessIdle;
+      } else {
+        profile.todayActiveSeconds = Math.max(profile.todayActiveSeconds || 0, sessActive);
+        profile.todayIdleSeconds = Math.max(profile.todayIdleSeconds || 0, sessIdle);
+      }
+      await profile.save();
+    } else if (params.recentDurationSeconds != null && params.recentDurationSeconds > 0) {
+      // Fallback delta calculation for agents explicitly transmitting interval durations
+      const delta = params.recentDurationSeconds;
+      if (profile.currentStatus === ActivityState.IDLE) {
+        if (!wasActive) {
+          profile.todayIdleSeconds = (profile.todayIdleSeconds || 0) + delta;
+          await profile.save();
+          if (profile.currentSessionId) {
+            await AttendanceSession.updateOne(
+              { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
+              { $inc: { idleSeconds: delta }, $set: { lastHeartbeatAt: now } }
+            );
+          }
+        }
+      } else if (profile.currentStatus === ActivityState.ACTIVE) {
+        profile.todayActiveSeconds = (profile.todayActiveSeconds || 0) + delta;
         await profile.save();
         if (profile.currentSessionId) {
           await AttendanceSession.updateOne(
             { _id: profile.currentSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
-            { $inc: { activeSeconds: deltaActive } }
+            { $inc: { activeSeconds: delta }, $set: { lastHeartbeatAt: now } }
           );
         }
       }
@@ -430,11 +542,11 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     hwnd: hwnd != null ? Number(hwnd) : null,
     pid: pid != null ? Number(pid) : null,
     executable: profile.currentExecutable || executable || null,
-    application: effectiveApp,
-    windowTitle: windowTitle || null,
+    application: profile.currentStatus === ActivityState.IDLE ? 'System Idle' : effectiveApp,
+    windowTitle: profile.currentStatus === ActivityState.IDLE ? 'System Idle' : (windowTitle || null),
     startedAt: effectiveStartedAt,
     lastSeenAt: now.toISOString(),
-    activeDurationSeconds: effectiveDuration,
+    activeDurationSeconds: profile.currentStatus === ActivityState.IDLE ? 0 : effectiveDuration,
     idleSeconds: Number(idleSeconds) || 0,
     status: (profile.currentStatus || ActivityState.OFFLINE).toLowerCase() as any
   });

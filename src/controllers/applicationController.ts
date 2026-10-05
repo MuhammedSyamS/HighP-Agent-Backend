@@ -185,6 +185,72 @@ export const getEmployeeApplicationUsage = async (req: Request, res: Response, n
   }
 };
 
+export const getEmployeeWebsiteUsage = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { employeeId } = req.params;
+
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      if (!req.user.employeeProfileId || req.user.employeeProfileId.toString() !== employeeId) {
+        throw new AppError('Forbidden: Employees can only view their own website usage', 403);
+      }
+    }
+
+    const { startDate, endDate, date } = req.query;
+    const companyId = new mongoose.Types.ObjectId(req.companyId);
+
+    const matchQuery: any = {
+      companyId,
+      employeeId: new mongoose.Types.ObjectId(employeeId)
+    };
+
+    if (date) {
+      matchQuery.date = date;
+    } else if (startDate || endDate) {
+      matchQuery.date = {};
+      if (startDate) matchQuery.date.$gte = startDate;
+      if (endDate) matchQuery.date.$lte = endDate;
+    }
+
+    const aggregated = await WebsiteActivity.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: '$domain',
+          browser: { $first: '$browser' },
+          totalSeconds: { $sum: '$totalSeconds' },
+          lastUsedAt: { $max: '$lastUsedAt' }
+        }
+      },
+      {
+        $project: {
+          domain: '$_id',
+          browser: 1,
+          totalSeconds: 1,
+          lastUsedAt: 1
+        }
+      },
+      { $sort: { totalSeconds: -1 } }
+    ]);
+
+    const totalTime = aggregated.reduce((acc, curr) => acc + curr.totalSeconds, 0);
+
+    const results = aggregated.map((site) => ({
+      ...site,
+      percentage: totalTime > 0 ? Math.round((site.totalSeconds / totalTime) * 100) : 0
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalTime,
+        websites: results
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ==========================================
 // Application Registry Controllers
 // ==========================================

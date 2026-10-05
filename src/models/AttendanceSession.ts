@@ -1,4 +1,4 @@
-﻿import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from 'mongoose';
 import { SessionStatus } from '../shared';
 
 export interface IAttendanceSessionDocument extends Document {
@@ -7,11 +7,13 @@ export interface IAttendanceSessionDocument extends Document {
   deviceId?: mongoose.Types.ObjectId;
   startedAt: Date;
   endedAt?: Date;
+  durationSeconds?: number;
   activeSeconds: number;
   idleSeconds: number;
   breakSeconds: number;
   status: SessionStatus;
   endReason?: string;
+  lastHeartbeatAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,11 +25,13 @@ const AttendanceSessionSchema = new Schema<IAttendanceSessionDocument>(
     deviceId: { type: Schema.Types.ObjectId, ref: 'Device' },
     startedAt: { type: Date, required: true, default: Date.now },
     endedAt: { type: Date },
+    durationSeconds: { type: Number, default: 0 },
     activeSeconds: { type: Number, default: 0 },
     idleSeconds: { type: Number, default: 0 },
     breakSeconds: { type: Number, default: 0 },
     status: { type: String, enum: Object.values(SessionStatus), default: SessionStatus.ACTIVE },
-    endReason: { type: String }
+    endReason: { type: String },
+    lastHeartbeatAt: { type: Date }
   },
   { timestamps: true }
 );

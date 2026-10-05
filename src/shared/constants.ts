@@ -1,6 +1,6 @@
 import { IAppCategory } from './types';
 
-export const DEFAULT_IDLE_THRESHOLD_MINUTES = 5;
+export const DEFAULT_IDLE_THRESHOLD_MINUTES = 1;
 export const DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30;
 export const DEFAULT_RETENTION_DAYS = 365; // 1 year internal retention
 export const DEFAULT_BATCH_SYNC_LIMIT = 100;

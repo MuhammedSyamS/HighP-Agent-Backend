@@ -71,6 +71,15 @@ export interface IEmployeeProfile {
   todayActiveSeconds: number;
   todayIdleSeconds: number;
   todayBreakSeconds: number;
+  todayShiftDuration?: number;
+  todayShiftStartedAt?: string | null;
+  todayShiftEndedAt?: string | null;
+  currentShiftStartedAt?: string | null;
+  lastCompletedShiftStartedAt?: string | null;
+  lastCompletedShiftEndedAt?: string | null;
+  lastCompletedShiftDuration?: number;
+  todayAttendanceStatus?: string;
+  todaySessionsCount?: number;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -82,11 +91,13 @@ export interface IAttendanceSession {
   deviceId?: string;
   startedAt: Date | string;
   endedAt?: Date | string;
+  durationSeconds?: number;
   activeSeconds: number;
   idleSeconds: number;
   breakSeconds: number;
   status: SessionStatus;
   endReason?: string;
+  lastHeartbeatAt?: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

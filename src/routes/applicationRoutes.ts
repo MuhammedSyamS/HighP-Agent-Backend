@@ -3,6 +3,7 @@ import {
   getCompanyApplicationUsage,
   getCompanyWebsiteUsage,
   getEmployeeApplicationUsage,
+  getEmployeeWebsiteUsage,
   getRegistryApplications,
   createRegistryApplication,
   updateRegistryApplication,
@@ -32,6 +33,7 @@ router.use(enforceTenant);
 router.get('/usage', requireRoles([UserRole.HR, UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getCompanyApplicationUsage);
 router.get('/websites', requireRoles([UserRole.HR, UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getCompanyWebsiteUsage);
 router.get('/usage/:employeeId', getEmployeeApplicationUsage);
+router.get('/websites/:employeeId', getEmployeeWebsiteUsage);
 
 // Application Registry CRUD
 router.get('/', requireRoles([UserRole.HR, UserRole.OWNER, UserRole.ADMIN, UserRole.MANAGER]), getRegistryApplications);

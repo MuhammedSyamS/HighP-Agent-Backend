@@ -1,11 +1,14 @@
 import mongoose from 'mongoose';
-import { SessionStatus, ActivityState, BreakReason } from '../shared';
+import { SessionStatus, ActivityState, BreakReason, ActivityEventType } from '../shared';
 import { AttendanceSession, IAttendanceSessionDocument } from '../models/AttendanceSession';
 import { Break, IBreakDocument } from '../models/Break';
+import { ActivityEvent } from '../models/ActivityEvent';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { emitToCompany, emitToEmployee } from '../realtime/socketManager';
+import { Company } from '../models/Company';
+import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { rebuildEmployeeDay } from './rebuildService';
 
 export const startWorkSession = async (
@@ -62,15 +65,33 @@ export const startWorkSession = async (
     employeeId: new mongoose.Types.ObjectId(employeeId),
     ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
     startedAt: now,
-    status: SessionStatus.ACTIVE
+    durationSeconds: 0,
+    activeSeconds: 0,
+    idleSeconds: 0,
+    breakSeconds: 0,
+    status: SessionStatus.ACTIVE,
+    lastHeartbeatAt: now
   });
 
   profile.currentSessionId = session._id;
   if (resolvedDeviceId) profile.currentDeviceId = resolvedDeviceId;
   profile.currentStatus = ActivityState.ACTIVE;
+  profile.currentApplication = '';
+  profile.currentExecutable = '';
+  profile.currentWebsiteDomain = '';
+  profile.currentAppStartedAt = now;
   profile.lastActiveAt = now;
   profile.lastHeartbeatAt = now;
   await profile.save();
+
+  try {
+    const company = await Company.findById(companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const todayStr = getDateStringInTimezone(now, companyTz);
+    await rebuildEmployeeDay(companyId, profile._id.toString(), todayStr);
+  } catch (rebuildErr) {
+    console.error('[SessionService] Rebuild error on session start:', rebuildErr);
+  }
 
   emitToCompany(companyId, 'employee:session_started', {
     companyId,
@@ -128,25 +149,82 @@ export const endWorkSession = async (
     ongoingBreak.endedAt = now;
     ongoingBreak.durationSeconds = Math.max(0, Math.round((now.getTime() - ongoingBreak.startedAt.getTime()) / 1000));
     await ongoingBreak.save();
-    session.breakSeconds += ongoingBreak.durationSeconds;
+    session.breakSeconds = Math.max(0, session.breakSeconds + ongoingBreak.durationSeconds);
   }
 
+  // Authoritative timestamp-based duration and interval reconciliation
+  const elapsedSessionSec = Math.max(0, Math.round((now.getTime() - session.startedAt.getTime()) / 1000));
+  session.durationSeconds = elapsedSessionSec;
+
+  const [sessionEvents, sessionBreaks] = await Promise.all([
+    ActivityEvent.find({
+      companyId: new mongoose.Types.ObjectId(companyId),
+      sessionId: session._id
+    }).lean(),
+    Break.find({
+      companyId: new mongoose.Types.ObjectId(companyId),
+      sessionId: session._id
+    }).lean()
+  ]);
+
+  const evActive = sessionEvents
+    .filter((e: any) => e.type !== ActivityEventType.IDLE_INTERVAL)
+    .reduce((sum: number, e: any) => sum + (e.durationSeconds || 0), 0);
+  const evIdle = sessionEvents
+    .filter((e: any) => e.type === ActivityEventType.IDLE_INTERVAL)
+    .reduce((sum: number, e: any) => sum + (e.durationSeconds || 0), 0);
+  const brkTotal = sessionBreaks
+    .reduce((sum: number, b: any) => sum + (b.durationSeconds || 0), 0);
+
+  let finalActive = Math.max(evActive, session.activeSeconds || 0);
+  let finalIdle = Math.max(evIdle, session.idleSeconds || 0);
+  let finalBreak = Math.max(brkTotal, session.breakSeconds || 0);
+
+  const recordedSum = finalActive + finalIdle + finalBreak;
+  const gap = Math.max(0, elapsedSessionSec - recordedSum);
+  if (gap > 0) {
+    if (profile.currentStatus === ActivityState.IDLE) {
+      finalIdle += gap;
+    } else if (profile.currentStatus === ActivityState.BREAK) {
+      finalBreak += gap;
+    } else {
+      finalActive += gap;
+    }
+  }
+
+  session.activeSeconds = finalActive;
+  session.idleSeconds = finalIdle;
+  session.breakSeconds = finalBreak;
   session.endedAt = now;
   session.status = SessionStatus.COMPLETED;
   session.endReason = endReason;
+  session.lastHeartbeatAt = now;
   await session.save();
 
+  // Clear current session on profile
+  await EmployeeProfile.updateOne(
+    { _id: profile._id },
+    {
+      $unset: { currentSessionId: 1, currentAppStartedAt: 1 },
+      $set: {
+        currentStatus: ActivityState.OFFLINE,
+        currentApplication: '',
+        currentExecutable: '',
+        currentWebsiteDomain: ''
+      }
+    }
+  );
+
   try {
-    const todayStr = now.toISOString().slice(0, 10);
+    const company = await Company.findById(companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const todayStr = getDateStringInTimezone(now, companyTz);
     await rebuildEmployeeDay(companyId, profile._id.toString(), todayStr);
   } catch (rebuildErr) {
     console.error('[SessionService] Rebuild error on session end:', rebuildErr);
   }
 
-  profile.currentSessionId = undefined;
-  profile.currentStatus = ActivityState.OFFLINE;
-  profile.currentApplication = '';
-  await profile.save();
+  const refreshedProfile = await EmployeeProfile.findById(profile._id);
 
   emitToCompany(companyId, 'employee:session_ended', {
     companyId,
@@ -154,14 +232,20 @@ export const endWorkSession = async (
     sessionId: session._id.toString(),
     endedAt: now.toISOString(),
     totalActiveSeconds: session.activeSeconds,
-    totalIdleSeconds: session.idleSeconds
+    totalIdleSeconds: session.idleSeconds,
+    todayActiveSeconds: refreshedProfile?.todayActiveSeconds || 0,
+    todayIdleSeconds: refreshedProfile?.todayIdleSeconds || 0,
+    todayBreakSeconds: refreshedProfile?.todayBreakSeconds || 0
   });
 
   emitToCompany(companyId, 'employee:status_changed', {
     companyId,
     employeeId: profile._id.toString(),
     status: ActivityState.OFFLINE,
-    currentApplication: ''
+    currentApplication: '',
+    todayActiveSeconds: refreshedProfile?.todayActiveSeconds || 0,
+    todayIdleSeconds: refreshedProfile?.todayIdleSeconds || 0,
+    todayBreakSeconds: refreshedProfile?.todayBreakSeconds || 0
   });
 
   return session;

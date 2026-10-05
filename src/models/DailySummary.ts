@@ -16,6 +16,8 @@ export interface IDailySummaryDocument extends Document {
   activeSeconds: number;
   idleSeconds: number;
   breakSeconds: number;
+  status?: string;
+  sessionsCount?: number;
   applicationUsage: IDailySummaryApplication[];
   createdAt: Date;
   updatedAt: Date;
@@ -59,6 +61,14 @@ const DailySummarySchema = new Schema<IDailySummaryDocument>(
       default: 0
     },
     breakSeconds: {
+      type: Number,
+      default: 0
+    },
+    status: {
+      type: String,
+      default: 'ABSENT'
+    },
+    sessionsCount: {
       type: Number,
       default: 0
     },

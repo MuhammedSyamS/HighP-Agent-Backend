@@ -9,7 +9,7 @@ import { WebsiteActivity } from '../models/WebsiteActivity';
 import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { logAudit } from '../services/auditService';
-import { AuditAction, UserStatus, UserRole, ActivityState, IDashboardOverview } from '../shared';
+import { AuditAction, UserStatus, UserRole, ActivityState, SessionStatus, IDashboardOverview } from '../shared';
 import { DailySummary } from '../models/DailySummary';
 import { Break } from '../models/Break';
 import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
@@ -92,22 +92,23 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
     const todaySessions = await AttendanceSession.find({
       companyId: new mongoose.Types.ObjectId(req.companyId),
       startedAt: { $gte: todayRange.start, $lte: todayRange.end }
-    }).lean();
+    }).sort({ startedAt: 1 }).lean();
     const sessionActiveMap = new Map<string, number>();
     const sessionIdleMap = new Map<string, number>();
     const sessionBreakMap = new Map<string, number>();
+    const empSessionsMap = new Map<string, any[]>();
 
     for (const sess of todaySessions) {
       if (!sess.employeeId) continue;
       const empKey = sess.employeeId.toString();
-      let sActive = sess.activeSeconds || 0;
-      let sIdle = sess.idleSeconds || 0;
-      let sBreak = sess.breakSeconds || 0;
+      if (!empSessionsMap.has(empKey)) empSessionsMap.set(empKey, []);
+      empSessionsMap.get(empKey)!.push(sess);
 
-      if (sess.status === 'ACTIVE' && sess.startedAt) {
-        const elapsed = Math.max(0, Math.floor((Date.now() - new Date(sess.startedAt).getTime()) / 1000));
-        sActive = Math.max(sActive, elapsed - sIdle - sBreak);
-      }
+      // Use authoritative stored values — do NOT compute active from elapsed wall clock
+      // as that inflates active time. The heartbeat service maintains these correctly.
+      const sActive = Math.max(0, sess.activeSeconds || 0);
+      const sIdle = Math.max(0, sess.idleSeconds || 0);
+      const sBreak = Math.max(0, sess.breakSeconds || 0);
 
       sessionActiveMap.set(empKey, (sessionActiveMap.get(empKey) || 0) + sActive);
       sessionIdleMap.set(empKey, (sessionIdleMap.get(empKey) || 0) + sIdle);
@@ -135,15 +136,11 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
       const sumActive = sumDoc?.activeSeconds || 0;
       const sumIdle = sumDoc?.idleSeconds || 0;
       const sumBreak = sumDoc?.breakSeconds || 0;
-      const cachedActive = p.todayActiveSeconds || 0;
-      const cachedIdle = p.todayIdleSeconds || 0;
-      const cachedBreak = p.todayBreakSeconds || 0;
+      const empSessList = empSessionsMap.get(pIdStr) || [];
       const sessActive = sessionActiveMap.get(pIdStr) || 0;
       const sessIdle = sessionIdleMap.get(pIdStr) || 0;
       const sessBreak = sessionBreakMap.get(pIdStr) || 0;
       const ongoingBreakSec = ongoingBreakMap.get(pIdStr) || 0;
-
-      let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
       if (p.currentStatus === ActivityState.ACTIVE) {
         p.currentWebsite = p.currentWebsiteDomain ? { domain: p.currentWebsiteDomain } : null;
@@ -152,9 +149,77 @@ export const getEmployees = async (req: Request, res: Response, next: NextFuncti
         p.currentWebsite = null;
       }
 
-      p.todayActiveSeconds = activeSec;
-      p.todayIdleSeconds = Math.max(cachedIdle, sumIdle, sessIdle);
-      p.todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak) + (p.currentStatus === ActivityState.BREAK ? ongoingBreakSec : 0);
+      const activeSess = empSessList.find((s: any) => s.status === SessionStatus.ACTIVE);
+      const isActuallyLive = !!activeSess && p.currentStatus !== ActivityState.OFFLINE;
+
+      const completedSessList = empSessList
+        .filter((s: any) => s.status === SessionStatus.COMPLETED && s.endedAt)
+        .map((s: any) => {
+          const wallClockSec = Math.max(0, Math.round((new Date(s.endedAt).getTime() - new Date(s.startedAt).getTime()) / 1000));
+          return {
+            ...s,
+            durationSeconds: (s.durationSeconds != null && s.durationSeconds > 0) ? s.durationSeconds : wallClockSec
+          };
+        });
+
+      const lastCompleted = completedSessList.length > 0 ? completedSessList[completedSessList.length - 1] : null;
+
+      let totalDur = completedSessList.reduce((acc: number, s: any) => acc + (s.durationSeconds || 0), 0);
+      if (activeSess) {
+        totalDur += Math.max(0, Math.round((Date.now() - new Date(activeSess.startedAt).getTime()) / 1000));
+      }
+      p.todayShiftDuration = totalDur;
+
+      let liveAct = 0;
+      let liveIdl = 0;
+      let liveBrk = 0;
+      if (activeSess && isActuallyLive) {
+        const liveElapsed = Math.max(0, Math.round((Date.now() - new Date(activeSess.startedAt).getTime()) / 1000));
+        let act = Math.max(0, activeSess.activeSeconds || 0);
+        let idl = Math.max(0, activeSess.idleSeconds || 0);
+        let brk = Math.max(0, activeSess.breakSeconds || 0) + (p.currentStatus === ActivityState.BREAK ? ongoingBreakSec : 0);
+        const gap = Math.max(0, liveElapsed - (act + idl + brk));
+        if (gap > 0) {
+          if (p.currentStatus === ActivityState.IDLE) {
+            idl += gap;
+          } else if (p.currentStatus === ActivityState.BREAK) {
+            brk += gap;
+          } else {
+            act += gap;
+          }
+        }
+        liveAct = act;
+        liveIdl = idl;
+        liveBrk = brk;
+      }
+
+      const compAct = completedSessList.reduce((acc: number, s: any) => acc + Math.max(0, s.activeSeconds || 0), 0);
+      const compIdl = completedSessList.reduce((acc: number, s: any) => acc + Math.max(0, s.idleSeconds || 0), 0);
+      const compBrk = completedSessList.reduce((acc: number, s: any) => acc + Math.max(0, s.breakSeconds || 0), 0);
+
+      p.todayActiveSeconds = compAct + liveAct;
+      p.todayIdleSeconds = compIdl + liveIdl;
+      p.todayBreakSeconds = compBrk + liveBrk;
+
+      // Attendance Shift Tracking
+      const firstStart = empSessList.length > 0 ? empSessList[0].startedAt : (sumDoc?.firstSessionStart || null);
+      const hasStartedToday = !!firstStart;
+
+      let attStatus = 'ABSENT';
+      if (isActuallyLive) {
+        attStatus = 'PRESENT';
+      } else if (completedSessList.length > 0) {
+        attStatus = 'COMPLETED';
+      }
+
+      p.todayShiftStartedAt = firstStart ? new Date(firstStart).toISOString() : null;
+      p.todayShiftEndedAt = (!isActuallyLive && lastCompleted) ? new Date(lastCompleted.endedAt).toISOString() : null;
+      p.currentShiftStartedAt = isActuallyLive && activeSess ? new Date(activeSess.startedAt).toISOString() : null;
+      p.lastCompletedShiftStartedAt = lastCompleted ? new Date(lastCompleted.startedAt).toISOString() : null;
+      p.lastCompletedShiftEndedAt = lastCompleted ? new Date(lastCompleted.endedAt).toISOString() : null;
+      p.lastCompletedShiftDuration = lastCompleted ? lastCompleted.durationSeconds : 0;
+      p.todayAttendanceStatus = attStatus;
+      p.todaySessionsCount = empSessList.length;
     }
 
     res.status(200).json({
@@ -197,11 +262,21 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
 
     // Fetch active session if any
     let currentSession = null;
-    if (profile.currentSessionId) {
+    if (profile.currentSessionId && profile.currentStatus !== ActivityState.OFFLINE) {
       currentSession = await AttendanceSession.findOne({
         _id: profile.currentSessionId,
-        companyId: req.companyId
+        companyId: req.companyId,
+        status: SessionStatus.ACTIVE
       }).lean();
+    }
+
+    // Clean up dangling currentSessionId if session is not active or employee is offline
+    if (profile.currentSessionId && !currentSession) {
+      await EmployeeProfile.updateOne(
+        { _id: profile._id },
+        { $unset: { currentSessionId: 1, currentAppStartedAt: 1 } }
+      );
+      profile.currentSessionId = undefined;
     }
 
     // Fetch registered devices
@@ -214,6 +289,7 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     const company = await Company.findById(req.companyId);
     const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
     const todayStr = getDateStringInTimezone(new Date(), companyTz);
+    const todayRange = getDayRangeInTimezone(todayStr, companyTz);
     const topApps = await ApplicationUsage.find({
       companyId: req.companyId,
       employeeId: profile._id,
@@ -230,54 +306,154 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
       .sort({ totalSeconds: -1 })
       .lean();
 
-    // Reconcile active work time for this profile
-    const appSec = topApps.reduce((acc, a) => acc + (a.totalSeconds || 0), 0);
     const summaryDoc = await DailySummary.findOne({
       companyId: req.companyId,
       employeeId: profile._id,
       date: todayStr
     }).lean();
-    const sumActive = summaryDoc?.activeSeconds || 0;
-    const sumIdle = summaryDoc?.idleSeconds || 0;
-    const sumBreak = summaryDoc?.breakSeconds || 0;
-    const cachedActive = (profile as any).todayActiveSeconds || 0;
-    const cachedIdle = (profile as any).todayIdleSeconds || 0;
-    const cachedBreak = (profile as any).todayBreakSeconds || 0;
 
-    let sessActive = 0;
-    let sessIdle = 0;
-    let sessBreak = 0;
-    if (currentSession && currentSession.startedAt) {
-      sessActive = currentSession.activeSeconds || 0;
-      sessIdle = currentSession.idleSeconds || 0;
-      sessBreak = currentSession.breakSeconds || 0;
+    // Fetch today's sessions for this employee
+    const todaySessions = await AttendanceSession.find({
+      companyId: req.companyId,
+      employeeId: profile._id,
+      startedAt: { $gte: todayRange.start, $lte: todayRange.end }
+    }).sort({ startedAt: 1 }).lean();
+
+    const completedSessions = todaySessions
+      .filter((s: any) => s.status === SessionStatus.COMPLETED && s.endedAt)
+      .map((s: any) => {
+        const wallClockSec = Math.max(0, Math.round((new Date(s.endedAt).getTime() - new Date(s.startedAt).getTime()) / 1000));
+        return {
+          ...s,
+          durationSeconds: (s.durationSeconds != null && s.durationSeconds > 0) ? s.durationSeconds : wallClockSec
+        };
+      })
+      .sort((a: any, b: any) => new Date(a.endedAt).getTime() - new Date(b.endedAt).getTime());
+
+    const lastCompletedSession = completedSessions.length > 0 ? completedSessions[completedSessions.length - 1] : null;
+
+    const compActive = completedSessions.reduce((acc: number, s: any) => acc + Math.max(0, s.activeSeconds || 0), 0);
+    const compIdle = completedSessions.reduce((acc: number, s: any) => acc + Math.max(0, s.idleSeconds || 0), 0);
+    const compBreak = completedSessions.reduce((acc: number, s: any) => acc + Math.max(0, s.breakSeconds || 0), 0);
+    const compDuration = completedSessions.reduce((acc: number, s: any) => acc + (s.durationSeconds || 0), 0);
+
+    let currAct = 0;
+    let currIdl = 0;
+    let currBrk = 0;
+    let currElapsed = 0;
+    if (currentSession && currentSession.startedAt && currentSession.status === SessionStatus.ACTIVE) {
+      currElapsed = Math.max(0, Math.round((Date.now() - new Date(currentSession.startedAt).getTime()) / 1000));
+
+      // Fetch all ActivityEvents and Breaks recorded for this live session
+      const [sessionEvents, sessionBreaks] = await Promise.all([
+        ActivityEvent.find({
+          companyId: req.companyId,
+          employeeId: profile._id,
+          sessionId: currentSession._id
+        }).lean(),
+        Break.find({
+          companyId: req.companyId,
+          employeeId: profile._id,
+          sessionId: currentSession._id
+        }).lean()
+      ]);
+
+      const evActive = sessionEvents
+        .filter((e: any) => e.type !== 'IDLE_INTERVAL')
+        .reduce((sum: number, e: any) => sum + (e.durationSeconds || 0), 0);
+      const evIdle = sessionEvents
+        .filter((e: any) => e.type === 'IDLE_INTERVAL')
+        .reduce((sum: number, e: any) => sum + (e.durationSeconds || 0), 0);
+      const breaksCompletedSec = sessionBreaks
+        .filter((b: any) => b.endedAt)
+        .reduce((sum: number, b: any) => sum + (b.durationSeconds || 0), 0);
+
+      const ongoingBrk = sessionBreaks.find((b: any) => !b.endedAt);
+      const ongoingBrkSec = ongoingBrk && ongoingBrk.startedAt
+        ? Math.max(0, Math.floor((Date.now() - new Date(ongoingBrk.startedAt).getTime()) / 1000))
+        : 0;
+
+      const baseActive = Math.max(evActive, currentSession.activeSeconds || 0);
+      const baseIdle = Math.max(evIdle, currentSession.idleSeconds || 0);
+      const baseBreak = Math.max(breaksCompletedSec + ongoingBrkSec, currentSession.breakSeconds || 0);
+
+      let activeSec = baseActive;
+      let idleSec = baseIdle;
+      let breakSec = baseBreak;
+
+      const recordedSum = activeSec + idleSec + breakSec;
+      const unaccounted = Math.max(0, currElapsed - recordedSum);
+
+      if (unaccounted > 0) {
+        if (profile.currentStatus === ActivityState.IDLE) {
+          idleSec += unaccounted;
+        } else if (profile.currentStatus === ActivityState.BREAK) {
+          breakSec += unaccounted;
+        } else {
+          activeSec += unaccounted;
+        }
+      }
+
+      currentSession.activeSeconds = activeSec;
+      currentSession.idleSeconds = idleSec;
+      currentSession.breakSeconds = breakSec;
+      currentSession.durationSeconds = currElapsed;
+      (currentSession as any).shiftDurationSeconds = currElapsed;
+
+      currAct = currentSession.activeSeconds;
+      currIdl = currentSession.idleSeconds;
+      currBrk = currentSession.breakSeconds;
     }
-
-    let activeSec = Math.max(cachedActive, sumActive, appSec, sessActive);
 
     if (profile.currentStatus !== ActivityState.ACTIVE) {
       profile.currentApplication = '';
     }
 
-    // Check for ongoing break to display live break time
-    const ongoingBreak = await Break.findOne({
-      companyId: req.companyId,
-      employeeId: profile._id,
-      endedAt: { $exists: false }
-    }).lean();
-    const ongoingBreakSec = (ongoingBreak && ongoingBreak.startedAt)
-      ? Math.max(0, Math.floor((Date.now() - new Date(ongoingBreak.startedAt).getTime()) / 1000))
-      : 0;
+    const todayActiveSeconds = compActive + currAct;
+    const todayIdleSeconds = compIdle + currIdl;
+    const todayBreakSeconds = compBreak + currBrk;
+    const todayShiftDuration = compDuration + currElapsed;
 
-    (profile as any).todayActiveSeconds = activeSec;
-    (profile as any).todayIdleSeconds = Math.max(cachedIdle, sumIdle, sessIdle);
-    (profile as any).todayBreakSeconds = Math.max(cachedBreak, sumBreak, sessBreak) + (profile.currentStatus === ActivityState.BREAK ? ongoingBreakSec : 0);
+    (profile as any).todayActiveSeconds = todayActiveSeconds;
+    (profile as any).todayIdleSeconds = todayIdleSeconds;
+    (profile as any).todayBreakSeconds = todayBreakSeconds;
+    (profile as any).todayShiftDuration = todayShiftDuration;
+
+    // Shift Tracking
+    const firstStart = todaySessions.length > 0 ? todaySessions[0].startedAt : (summaryDoc?.firstSessionStart || null);
+    const isLiveNow = !!currentSession && profile.currentStatus !== ActivityState.OFFLINE;
+
+    let attStatus = 'ABSENT';
+    if (isLiveNow) {
+      attStatus = 'PRESENT';
+    } else if (completedSessions.length > 0) {
+      attStatus = 'COMPLETED';
+    }
+
+    (profile as any).todayShiftStartedAt = firstStart ? new Date(firstStart).toISOString() : null;
+    (profile as any).todayShiftEndedAt = (!isLiveNow && lastCompletedSession) ? new Date(lastCompletedSession.endedAt).toISOString() : null;
+    (profile as any).currentShiftStartedAt = isLiveNow && currentSession ? new Date(currentSession.startedAt).toISOString() : null;
+    (profile as any).lastCompletedShiftStartedAt = lastCompletedSession ? new Date(lastCompletedSession.startedAt).toISOString() : null;
+    (profile as any).lastCompletedShiftEndedAt = lastCompletedSession ? new Date(lastCompletedSession.endedAt).toISOString() : null;
+    (profile as any).lastCompletedShiftDuration = lastCompletedSession ? lastCompletedSession.durationSeconds : 0;
+    (profile as any).todayAttendanceStatus = attStatus;
+    (profile as any).todaySessionsCount = todaySessions.length;
 
     res.status(200).json({
       success: true,
       data: {
         profile,
         currentSession,
+        todaySessions,
+        completedSessions,
+        lastCompletedSession,
+        todayTotals: {
+          todayActiveSeconds,
+          todayIdleSeconds,
+          todayBreakSeconds,
+          todayShiftDuration,
+          sessionsCount: todaySessions.length
+        },
         devices,
         topApps,
         topWebsites

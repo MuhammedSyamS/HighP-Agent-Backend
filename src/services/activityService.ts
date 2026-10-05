@@ -133,16 +133,18 @@ export const ingestActivityEvents = async (
         });
 
         if (resolvedSessionId) {
-          await AttendanceSession.updateOne(
-            { _id: resolvedSessionId, companyId: new mongoose.Types.ObjectId(companyId) },
-            { $inc: { idleSeconds: duration } }
-          );
+          const sess = await AttendanceSession.findById(resolvedSessionId);
+          if (sess) {
+            const sessEnd = sess.endedAt ? sess.endedAt.getTime() : Date.now();
+            const elapsed = Math.max(0, Math.round((sessEnd - sess.startedAt.getTime()) / 1000));
+            const currentIdle = Math.max(0, sess.idleSeconds || 0);
+            const currentActive = Math.max(0, sess.activeSeconds || 0);
+            const currentBreak = Math.max(0, sess.breakSeconds || 0);
+            const maxAllowedIdle = Math.max(0, elapsed - currentActive - currentBreak + 30);
+            sess.idleSeconds = Math.min(Math.max(currentIdle, currentIdle + duration), maxAllowedIdle);
+            await sess.save();
+          }
         }
-
-        await EmployeeProfile.updateOne(
-          { _id: new mongoose.Types.ObjectId(employeeId) },
-          { $inc: { todayIdleSeconds: duration } }
-        );
 
         accepted.push(event.eventId);
         continue;
