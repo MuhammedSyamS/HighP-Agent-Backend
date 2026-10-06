@@ -30,6 +30,7 @@ export const createApp = (): Express => {
       maxAge: 86400
     })
   );
+  app.options('*', cors());
 
   // Vercel Serverless URL Normalization
   app.use((req, res, next) => {

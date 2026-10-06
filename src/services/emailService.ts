@@ -7,11 +7,16 @@ function getTransporter() {
   if (!transporter) {
     if (config.email.user && config.email.pass) {
       transporter = nodemailer.createTransport({
-        service: config.email.service,
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true, // Use SSL directly on port 465 (bypasses port 587 STARTTLS network drops on cloud hosts)
         auth: {
           user: config.email.user,
           pass: config.email.pass
-        }
+        },
+        connectionTimeout: 7000,
+        greetingTimeout: 7000,
+        socketTimeout: 10000
       });
     }
   }
