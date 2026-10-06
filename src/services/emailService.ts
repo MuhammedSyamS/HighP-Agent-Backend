@@ -4,21 +4,23 @@ import { config } from '../config';
 let transporter: Transporter | null = null;
 
 function getTransporter() {
+  const user = (config.email.user || '').trim();
+  const pass = (config.email.pass || '').replace(/\s+/g, '');
+
+  if (!user || !pass) {
+    return null;
+  }
+
   if (!transporter) {
-    if (config.email.user && config.email.pass) {
-      transporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 465,
-        secure: true, // Use SSL directly on port 465 (bypasses port 587 STARTTLS network drops on cloud hosts)
-        auth: {
-          user: config.email.user,
-          pass: config.email.pass
-        },
-        connectionTimeout: 7000,
-        greetingTimeout: 7000,
-        socketTimeout: 10000
-      });
-    }
+    transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true, // Direct SSL port 465
+      auth: { user, pass },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000
+    });
   }
   return transporter;
 }

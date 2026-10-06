@@ -402,15 +402,24 @@ export const sendOtpService = async (email: string, purpose: 'LOGIN' | 'FORGOT_P
 
   console.log(`[AUTH_OTP] >>> Generated 6-digit OTP for ${cleanEmail} (${purpose}): [ ${otp} ] valid until ${expiresAt.toLocaleTimeString()} <<<`);
 
-  // Dispatch real email via Gmail SMTP / Nodemailer asynchronously so HTTP response never times out
-  sendOtpEmail(cleanEmail, otp, purpose).catch((emailErr) => {
-    console.warn(`[AUTH_OTP] Email sending warning for ${cleanEmail}:`, emailErr.message);
-  });
+  // Dispatch real email via Gmail SMTP / Nodemailer (with 5-second race timeout so API stays responsive)
+  let emailDelivered = false;
+  try {
+    emailDelivered = await Promise.race([
+      sendOtpEmail(cleanEmail, otp, purpose),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
+    ]);
+  } catch (emailErr: any) {
+    console.warn(`[AUTH_OTP] Email sending error for ${cleanEmail}:`, emailErr.message);
+  }
 
   return {
     email: user ? user.email : cleanEmail,
     expiresAt,
-    message: `Verification code sent to ${user ? user.email : cleanEmail}. Please check your email inbox.`
+    emailDelivered,
+    message: emailDelivered
+      ? `Verification code sent to ${user ? user.email : cleanEmail}. Please check your email inbox.`
+      : `Verification code generated for ${user ? user.email : cleanEmail}. If you don't receive the email, check your spam folder or verify server email settings.`
   };
 };
 
