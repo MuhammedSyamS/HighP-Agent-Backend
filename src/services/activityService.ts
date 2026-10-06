@@ -103,15 +103,28 @@ export const ingestActivityEvents = async (
         continue;
       }
 
-      // If still no session, create one fallback session
+      // If still no session, check for today's session first before creating a fallback session
       if (!resolvedSessionId) {
-        const fallbackSession = await AttendanceSession.create({
+        const { start: dayStart, end: dayEnd } = getDayRangeInTimezone(dateStr, companyTz);
+        let todaySession = await AttendanceSession.findOne({
           companyId: new mongoose.Types.ObjectId(companyId),
           employeeId: new mongoose.Types.ObjectId(employeeId),
-          startedAt: started,
-          status: SessionStatus.ACTIVE
-        });
-        resolvedSessionId = fallbackSession._id as mongoose.Types.ObjectId;
+          $or: [
+            { date: dateStr },
+            { startedAt: { $gte: dayStart, $lte: dayEnd } }
+          ]
+        }).sort({ startedAt: 1 });
+
+        if (!todaySession) {
+          todaySession = await AttendanceSession.create({
+            companyId: new mongoose.Types.ObjectId(companyId),
+            employeeId: new mongoose.Types.ObjectId(employeeId),
+            date: dateStr,
+            startedAt: started,
+            status: SessionStatus.ACTIVE
+          });
+        }
+        resolvedSessionId = todaySession._id as mongoose.Types.ObjectId;
       }
 
       // Handle IDLE_INTERVAL directly without requiring TrackedApplication registry match

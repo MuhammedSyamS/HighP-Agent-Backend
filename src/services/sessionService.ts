@@ -8,7 +8,7 @@ import { Device } from '../models/Device';
 import { AppError } from '../middleware/errorHandler';
 import { emitToCompany, emitToEmployee } from '../realtime/socketManager';
 import { Company } from '../models/Company';
-import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { rebuildEmployeeDay } from './rebuildService';
 
 export const startWorkSession = async (
@@ -21,7 +21,13 @@ export const startWorkSession = async (
     throw new AppError('Employee profile not found.', 404);
   }
 
-  // If already in an active session, return current session
+  const company = await Company.findById(companyId);
+  const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+  const now = new Date();
+  const todayStr = getDateStringInTimezone(now, companyTz);
+  const { start: startOfToday, end: endOfToday } = getDayRangeInTimezone(todayStr, companyTz);
+
+  // 1. If profile is already linked to an active session, return it
   if (profile.currentSessionId) {
     const existing = await AttendanceSession.findOne({
       _id: profile.currentSessionId,
@@ -33,7 +39,7 @@ export const startWorkSession = async (
     }
   }
 
-  // Also check if an active work session is already open for this employee
+  // 2. Also check if an active work session is already open for this employee
   const existingActive = await AttendanceSession.findOne({
     companyId: new mongoose.Types.ObjectId(companyId),
     employeeId: profile._id,
@@ -43,8 +49,8 @@ export const startWorkSession = async (
   if (existingActive) {
     profile.currentSessionId = existingActive._id;
     profile.currentStatus = ActivityState.ACTIVE;
-    profile.lastActiveAt = new Date();
-    profile.lastHeartbeatAt = new Date();
+    profile.lastActiveAt = now;
+    profile.lastHeartbeatAt = now;
     await profile.save();
     return existingActive;
   }
@@ -59,19 +65,47 @@ export const startWorkSession = async (
     }
   }
 
-  const now = new Date();
-  const session = await AttendanceSession.create({
+  // 3. ENFORCE STRICTLY ONE ATTENDANCE SESSION PER DAY PER EMPLOYEE
+  // Check if a session already exists for today (even if completed / clocked out earlier today)
+  const existingTodaySession = await AttendanceSession.findOne({
     companyId: new mongoose.Types.ObjectId(companyId),
-    employeeId: new mongoose.Types.ObjectId(employeeId),
-    ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
-    startedAt: now,
-    durationSeconds: 0,
-    activeSeconds: 0,
-    idleSeconds: 0,
-    breakSeconds: 0,
-    status: SessionStatus.ACTIVE,
-    lastHeartbeatAt: now
-  });
+    employeeId: profile._id,
+    $or: [
+      { date: todayStr },
+      { startedAt: { $gte: startOfToday, $lte: endOfToday } }
+    ]
+  }).sort({ startedAt: 1 });
+
+  let session: IAttendanceSessionDocument;
+
+  if (existingTodaySession) {
+    // RESUME today's existing session: DO NOT create multiple sessions on the same day!
+    existingTodaySession.status = SessionStatus.ACTIVE;
+    existingTodaySession.endedAt = undefined;
+    existingTodaySession.endReason = undefined;
+    existingTodaySession.lastHeartbeatAt = now;
+    if (!existingTodaySession.date) existingTodaySession.date = todayStr;
+    if (resolvedDeviceId) existingTodaySession.deviceId = resolvedDeviceId;
+    await existingTodaySession.save();
+    session = existingTodaySession;
+    console.log(`[SessionService] Resumed today's single session for employee ${employeeId} on ${todayStr} (ID: ${session._id})`);
+  } else {
+    // Create the ONLY session for today
+    session = await AttendanceSession.create({
+      companyId: new mongoose.Types.ObjectId(companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      date: todayStr,
+      ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
+      startedAt: now,
+      durationSeconds: 0,
+      activeSeconds: 0,
+      idleSeconds: 0,
+      breakSeconds: 0,
+      status: SessionStatus.ACTIVE,
+      lastHeartbeatAt: now
+    });
+    console.log(`[SessionService] Created single daily session for employee ${employeeId} on ${todayStr} (ID: ${session._id})`);
+  }
 
   profile.currentSessionId = session._id;
   if (resolvedDeviceId) profile.currentDeviceId = resolvedDeviceId;

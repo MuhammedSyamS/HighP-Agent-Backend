@@ -5,6 +5,7 @@ export interface IAttendanceSessionDocument extends Document {
   companyId: mongoose.Types.ObjectId;
   employeeId: mongoose.Types.ObjectId;
   deviceId?: mongoose.Types.ObjectId;
+  date?: string;
   startedAt: Date;
   endedAt?: Date;
   durationSeconds?: number;
@@ -23,6 +24,7 @@ const AttendanceSessionSchema = new Schema<IAttendanceSessionDocument>(
     companyId: { type: Schema.Types.ObjectId, ref: 'Company', required: true, index: true },
     employeeId: { type: Schema.Types.ObjectId, ref: 'EmployeeProfile', required: true, index: true },
     deviceId: { type: Schema.Types.ObjectId, ref: 'Device' },
+    date: { type: String, index: true },
     startedAt: { type: Date, required: true, default: Date.now },
     endedAt: { type: Date },
     durationSeconds: { type: Number, default: 0 },

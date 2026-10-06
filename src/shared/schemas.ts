@@ -19,6 +19,7 @@ export const SignupSchema = z.object({
   lastName: z.string().min(1, 'Last name is required').max(50),
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
+  otp: z.string().min(6, 'Verification code must be 6 digits'),
   department: z.string().optional(),
   designation: z.string().optional(),
   companySlug: z.string().optional()

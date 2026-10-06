@@ -1,5 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
-import { registerCompany, loginUser, refreshAccessToken } from '../services/authService';
+import {
+  registerCompany,
+  loginUser,
+  refreshAccessToken,
+  sendOtpService,
+  verifyOtpAndLogin,
+  resetPasswordWithOtpService
+} from '../services/authService';
 import { User } from '../models/User';
 import { Company } from '../models/Company';
 import { EmployeeProfile } from '../models/EmployeeProfile';
@@ -195,3 +202,58 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
     next(error);
   }
 };
+
+export const sendOtp = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, purpose } = req.body;
+    const result = await sendOtpService(email, purpose || 'LOGIN');
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        email: result.email,
+        expiresAt: result.expiresAt
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const verifyOtpLogin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, otp } = req.body;
+    const result = await verifyOtpAndLogin(email, otp);
+
+    await logAudit({
+      companyId: result.company.id.toString(),
+      userId: result.user.id.toString(),
+      action: AuditAction.USER_LOGIN,
+      resource: 'Auth',
+      details: { email: result.user.email, type: 'otp_login' },
+      ipAddress: req.ip
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP verification successful. Logged in.',
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resetPasswordOtp = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    const result = await resetPasswordWithOtpService(email, otp, newPassword);
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

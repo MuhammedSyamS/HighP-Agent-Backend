@@ -29,5 +29,15 @@ export const config = {
     staleSessionMultiplier: 3 // Heartbeats missed before marking offline
   },
   clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
-  redisUrl: process.env.REDIS_URL || undefined
+  redisUrl: process.env.REDIS_URL || undefined,
+  email: {
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.EMAIL_PORT || '587', 10),
+    secure: process.env.EMAIL_SECURE === 'true',
+    user: process.env.EMAIL_USER || 'shamsaifudheen@gmail.com',
+    pass: (process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD || 'ivwz fjif aopw tzum').replace(/\s+/g, ''),
+    from: process.env.EMAIL_FROM || '"HighP Monitor" <shamsaifudheen@gmail.com>'
+  }
 };
+
