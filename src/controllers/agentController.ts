@@ -19,7 +19,7 @@ export const registerDevice = async (req: Request, res: Response, next: NextFunc
       throw new AppError('No employee profile associated with this account.', 400);
     }
 
-    const { deviceIdentifier, deviceName, osInfo, agentVersion } = req.body;
+    const { deviceIdentifier, deviceName, osInfo, agentVersion, platform, architecture, capabilities, permissions } = req.body;
 
     let device = await Device.findOne({
       companyId: req.companyId,
@@ -34,6 +34,10 @@ export const registerDevice = async (req: Request, res: Response, next: NextFunc
       device.deviceName = deviceName;
       device.osInfo = osInfo;
       device.agentVersion = agentVersion;
+      if (platform) (device as any).platform = platform;
+      if (architecture) (device as any).architecture = architecture;
+      if (capabilities) (device as any).capabilities = capabilities;
+      if (permissions) (device as any).permissions = permissions;
       device.lastHeartbeatAt = new Date();
       device.lastIpAddress = req.ip;
       await device.save();
@@ -45,6 +49,10 @@ export const registerDevice = async (req: Request, res: Response, next: NextFunc
         deviceName,
         osInfo,
         agentVersion,
+        platform: platform || osInfo?.platform || 'win32',
+        architecture: architecture || osInfo?.arch || 'x64',
+        capabilities,
+        permissions,
         status: DeviceStatus.ACTIVE,
         lastHeartbeatAt: new Date(),
         lastIpAddress: req.ip

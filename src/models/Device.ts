@@ -1,4 +1,4 @@
-﻿import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from 'mongoose';
 import { DeviceStatus } from '../shared';
 
 export interface IDeviceDocument extends Document {
@@ -13,6 +13,10 @@ export interface IDeviceDocument extends Document {
     hostname: string;
   };
   agentVersion: string;
+  platform?: string;
+  architecture?: string;
+  capabilities?: Record<string, any>;
+  permissions?: Record<string, any>;
   status: DeviceStatus;
   lastHeartbeatAt: Date;
   lastIpAddress?: string;
@@ -33,6 +37,10 @@ const DeviceSchema = new Schema<IDeviceDocument>(
       hostname: { type: String, default: '' }
     },
     agentVersion: { type: String, default: '1.0.0' },
+    platform: { type: String },
+    architecture: { type: String },
+    capabilities: { type: Schema.Types.Mixed },
+    permissions: { type: Schema.Types.Mixed },
     status: { type: String, enum: Object.values(DeviceStatus), default: DeviceStatus.ACTIVE },
     lastHeartbeatAt: { type: Date, default: Date.now },
     lastIpAddress: { type: String }

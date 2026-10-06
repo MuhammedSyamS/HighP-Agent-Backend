@@ -1,6 +1,15 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { SessionStatus } from '../shared';
 
+export interface SequenceGapEntry {
+  sequenceNumber: number;
+  status: 'EXPECTED' | 'RECEIVED' | 'MISSING' | 'LATE' | 'DUPLICATE' | 'FINALIZED';
+  detectedAt: Date;
+  resolvedAt?: Date;
+  finalizedAt?: Date;
+  reason?: string;
+}
+
 export interface IAttendanceSessionDocument extends Document {
   companyId: mongoose.Types.ObjectId;
   employeeId: mongoose.Types.ObjectId;
@@ -15,6 +24,9 @@ export interface IAttendanceSessionDocument extends Document {
   status: SessionStatus;
   endReason?: string;
   lastHeartbeatAt?: Date;
+  lastSequenceNumber?: number;
+  missingSequences?: number[];
+  sequenceGaps?: SequenceGapEntry[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,7 +45,23 @@ const AttendanceSessionSchema = new Schema<IAttendanceSessionDocument>(
     breakSeconds: { type: Number, default: 0 },
     status: { type: String, enum: Object.values(SessionStatus), default: SessionStatus.ACTIVE },
     endReason: { type: String },
-    lastHeartbeatAt: { type: Date }
+    lastHeartbeatAt: { type: Date },
+    lastSequenceNumber: { type: Number, default: 0 },
+    missingSequences: [{ type: Number }],
+    sequenceGaps: [
+      {
+        sequenceNumber: { type: Number, required: true },
+        status: {
+          type: String,
+          enum: ['EXPECTED', 'RECEIVED', 'MISSING', 'LATE', 'DUPLICATE', 'FINALIZED'],
+          default: 'MISSING'
+        },
+        detectedAt: { type: Date, default: Date.now },
+        resolvedAt: { type: Date },
+        finalizedAt: { type: Date },
+        reason: { type: String }
+      }
+    ]
   },
   { timestamps: true }
 );

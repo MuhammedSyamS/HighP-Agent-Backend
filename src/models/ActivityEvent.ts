@@ -14,6 +14,11 @@ export interface IActivityEventDocument extends Document {
   category?: string;
   processId?: number;
   windowTitleSanitized?: string;
+  sequenceNumber?: number;
+  durationMs?: number;
+  clockSource?: string;
+  wallClockStart?: Date;
+  wallClockEnd?: Date;
   startedAt: Date;
   lastSeenAt?: Date;
   endedAt: Date;
@@ -31,6 +36,7 @@ const ActivityEventSchema = new Schema<IActivityEventDocument>(
     sessionId: { type: Schema.Types.ObjectId, ref: 'AttendanceSession', required: true, index: true },
     deviceId: { type: Schema.Types.ObjectId, ref: 'Device' },
     applicationId: { type: Schema.Types.ObjectId, ref: 'TrackedApplication' },
+    sequenceNumber: { type: Number },
     type: { type: String, enum: Object.values(ActivityEventType), default: ActivityEventType.APPLICATION_FOCUS },
     applicationName: { type: String, required: true, trim: true },
     processName: { type: String, trim: true },
@@ -38,6 +44,10 @@ const ActivityEventSchema = new Schema<IActivityEventDocument>(
     processId: { type: Number },
     windowTitleSanitized: { type: String, trim: true },
     domain: { type: String, trim: true },
+    durationMs: { type: Number, min: 0 },
+    clockSource: { type: String, default: 'MONOTONIC' },
+    wallClockStart: { type: Date },
+    wallClockEnd: { type: Date },
     startedAt: { type: Date, required: true },
     lastSeenAt: { type: Date },
     endedAt: { type: Date, required: true },
