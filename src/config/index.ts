@@ -33,11 +33,26 @@ export const config = {
   email: {
     service: process.env.EMAIL_SERVICE || 'gmail',
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.EMAIL_PORT || '587', 10),
-    secure: process.env.EMAIL_SECURE === 'true',
-    user: process.env.EMAIL_USER || 'shamsaifudheen@gmail.com',
-    pass: (process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD || 'ivwz fjif aopw tzum').replace(/\s+/g, ''),
-    from: process.env.EMAIL_FROM || '"HighP Monitor" <shamsaifudheen@gmail.com>'
+    port: parseInt(process.env.EMAIL_PORT || '465', 10),
+    secure: process.env.EMAIL_SECURE !== 'false',
+    user: (
+      process.env.EMAIL_USER ||
+      process.env.EMAIL ||
+      process.env.NODEMAILER_USER ||
+      process.env.NODEMAILER_EMAIL ||
+      process.env.MAIL_USER ||
+      ''
+    ).trim(),
+    pass: (
+      process.env.EMAIL_PASS ||
+      process.env.EMAIL_PASSWORD ||
+      process.env.NODEMAILER_PASS ||
+      process.env.NODEMAILER_PASSWORD ||
+      process.env.MAIL_PASS ||
+      process.env.MAIL_PASSWORD ||
+      ''
+    ).replace(/\s+/g, ''),
+    from: process.env.EMAIL_FROM || process.env.MAIL_FROM || 'HighP Monitor'
   }
 };
 
