@@ -124,28 +124,41 @@ export const calculatePayrollSummary = async (
       empOtHrs += dayOt;
     }
 
-    // If today is in range and employee is currently working, incorporate live session counters
-    if (todayStr >= startStr! && todayStr <= endStr! && p.currentStatus !== 'OFFLINE' && p.todayActiveSeconds != null) {
-      // Check if today already had a summary or if live today values exceed
+    // If today is in range, incorporate live session counters and calculate overtime
+    if (todayStr >= startStr! && todayStr <= endStr! && ((p.todayActiveSeconds || 0) > 0 || (p.todayIdleSeconds || 0) > 0 || p.currentStatus !== 'OFFLINE')) {
       const todayDs = empSummaries.find((s) => s.date === todayStr);
       const liveAct = Math.max(0, p.todayActiveSeconds || 0);
       const liveIdl = Math.max(0, p.todayIdleSeconds || 0);
-      const liveBrk = Math.max(0, p.todayBreakSeconds || 0);
 
       const recordedAct = todayDs ? (todayDs.activeSeconds || 0) : 0;
       const recordedIdl = todayDs ? (todayDs.idleSeconds || 0) : 0;
       const deltaAct = Math.max(0, liveAct - recordedAct);
       const deltaIdl = Math.max(0, liveIdl - recordedIdl);
       const deltaBillable = payIdleTime ? (deltaAct + deltaIdl) : deltaAct;
-      const deltaHrs = deltaBillable / 3600;
 
-      if (deltaHrs > 0) {
+      if (deltaAct > 0 || deltaIdl > 0) {
         empShiftSec += (deltaAct + deltaIdl);
         empActiveSec += deltaAct;
         empIdleSec += deltaIdl;
         empBillableSec += deltaBillable;
-        empRegHrs += deltaHrs;
-        if (!todayDs && daysWorked === 0) daysWorked++;
+
+        // Partition today's total into regular and overtime hours
+        const priorBillable = payIdleTime ? (recordedAct + recordedIdl) : recordedAct;
+        const priorBillableHrs = priorBillable / 3600;
+        const priorReg = Math.min(priorBillableHrs, standardDailyHours);
+        const priorOt = Math.max(0, priorBillableHrs - standardDailyHours);
+
+        const newBillable = priorBillable + deltaBillable;
+        const newBillableHrs = newBillable / 3600;
+        const newReg = Math.min(newBillableHrs, standardDailyHours);
+        const newOt = Math.max(0, newBillableHrs - standardDailyHours);
+
+        empRegHrs += (newReg - priorReg);
+        empOtHrs += (newOt - priorOt);
+
+        if (!todayDs && newBillableHrs > 0 && daysWorked === 0) {
+          daysWorked++;
+        }
       }
     }
 
@@ -310,6 +323,84 @@ export const getEmployeePayrollDetail = async (
       lastEnd: ds.lastSessionEnd ? new Date(ds.lastSessionEnd).toISOString() : undefined
     };
   });
+
+  // Incorporate today's live telemetry and overtime if within requested date range
+  if (todayStr >= startStr && todayStr <= endStr) {
+    const liveAct = Math.max(0, profile.todayActiveSeconds || 0);
+    const liveIdl = Math.max(0, profile.todayIdleSeconds || 0);
+    const liveBrk = Math.max(0, profile.todayBreakSeconds || 0);
+
+    const existingToday = dailyBreakdown.find((b) => b.date === todayStr);
+
+    if (existingToday) {
+      const recAct = existingToday.activeSeconds || 0;
+      const recIdl = existingToday.idleSeconds || 0;
+      const deltaAct = Math.max(0, liveAct - recAct);
+      const deltaIdl = Math.max(0, liveIdl - recIdl);
+      const deltaBillable = payIdleTime ? (deltaAct + deltaIdl) : deltaAct;
+
+      if (deltaAct > 0 || deltaIdl > 0) {
+        const priorBillable = existingToday.billableSeconds || 0;
+        const priorBillableHrs = priorBillable / 3600;
+        const priorReg = Math.min(priorBillableHrs, standardDailyHours);
+        const priorOt = Math.max(0, priorBillableHrs - standardDailyHours);
+
+        const newBillable = priorBillable + deltaBillable;
+        const newBillableHrs = newBillable / 3600;
+        const newReg = Math.min(newBillableHrs, standardDailyHours);
+        const newOt = Math.max(0, newBillableHrs - standardDailyHours);
+
+        totalShiftSec += (deltaAct + deltaIdl);
+        totalActiveSec += deltaAct;
+        totalIdleSec += deltaIdl;
+        totalBillableSec += deltaBillable;
+        totalRegHrs += (newReg - priorReg);
+        totalOtHrs += (newOt - priorOt);
+
+        existingToday.activeSeconds += deltaAct;
+        existingToday.idleSeconds += deltaIdl;
+        existingToday.shiftSeconds += (deltaAct + deltaIdl);
+        existingToday.billableSeconds = newBillable;
+        existingToday.regularHours = Math.round(newReg * 100) / 100;
+        existingToday.overtimeHours = Math.round(newOt * 100) / 100;
+        existingToday.dailyEarnings = Math.round((newReg * hourlyRate + newOt * hourlyRate * overtimeMultiplier) * 100) / 100;
+      }
+    } else if (liveAct > 0 || liveIdl > 0 || profile.currentStatus !== 'OFFLINE') {
+      const shift = liveAct + liveIdl + liveBrk;
+      const billable = payIdleTime ? (liveAct + liveIdl) : liveAct;
+      const billableHrs = billable / 3600;
+      const regHrs = Math.min(billableHrs, standardDailyHours);
+      const otHrs = Math.max(0, billableHrs - standardDailyHours);
+      const dayEarnings = Math.round((regHrs * hourlyRate + otHrs * hourlyRate * overtimeMultiplier) * 100) / 100;
+
+      if (billableHrs > 0) daysWorked++;
+
+      totalShiftSec += shift;
+      totalActiveSec += liveAct;
+      totalIdleSec += liveIdl;
+      totalBreakSec += liveBrk;
+      totalBillableSec += billable;
+      totalRegHrs += regHrs;
+      totalOtHrs += otHrs;
+
+      const dateObj = new Date(todayStr + 'T00:00:00Z');
+      const dayOfWeek = daysOfWeek[dateObj.getUTCDay()] || '';
+
+      dailyBreakdown.push({
+        date: todayStr,
+        dayOfWeek,
+        status: profile.currentStatus !== 'OFFLINE' ? 'ACTIVE' : 'PRESENT',
+        shiftSeconds: shift,
+        activeSeconds: liveAct,
+        idleSeconds: liveIdl,
+        breakSeconds: liveBrk,
+        billableSeconds: billable,
+        regularHours: Math.round(regHrs * 100) / 100,
+        overtimeHours: Math.round(otHrs * 100) / 100,
+        dailyEarnings: dayEarnings
+      });
+    }
+  }
 
   const regPay = Math.round(totalRegHrs * hourlyRate * 100) / 100;
   const otPay = Math.round(totalOtHrs * hourlyRate * overtimeMultiplier * 100) / 100;

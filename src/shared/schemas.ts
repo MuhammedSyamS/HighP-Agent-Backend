@@ -38,15 +38,25 @@ export const CreateEmployeeSchema = z.object({
   employeeCode: z.string().min(1, 'Employee code is required'),
   department: z.string().min(1, 'Department is required'),
   designation: z.string().min(1, 'Designation is required'),
+  hourlyRate: z.number().min(0).optional(),
+  currency: z.string().optional(),
+  overtimeMultiplier: z.number().min(1).optional(),
+  standardDailyHours: z.number().min(1).optional(),
   managerId: z.string().optional()
 });
 
 export const UpdateEmployeeSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
+  email: z.string().email('Invalid email address').optional(),
   role: z.nativeEnum(UserRole).optional(),
   department: z.string().optional(),
   designation: z.string().optional(),
+  employeeCode: z.string().optional(),
+  hourlyRate: z.number().min(0).optional(),
+  currency: z.string().optional(),
+  overtimeMultiplier: z.number().min(1).optional(),
+  standardDailyHours: z.number().min(1).optional(),
   managerId: z.string().nullable().optional(),
   status: z.string().optional()
 });

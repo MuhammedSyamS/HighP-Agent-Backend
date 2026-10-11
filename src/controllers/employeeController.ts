@@ -490,7 +490,21 @@ export const getEmployeeLiveTelemetry = async (req: Request, res: Response, next
 
 export const createEmployee = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { email, firstName, lastName, password = 'Password@123', role, employeeCode, department, designation, managerId } = req.body;
+    const {
+      email,
+      firstName,
+      lastName,
+      password = 'Password@123',
+      role,
+      employeeCode,
+      department,
+      designation,
+      hourlyRate,
+      currency,
+      overtimeMultiplier,
+      standardDailyHours,
+      managerId
+    } = req.body;
 
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
@@ -511,7 +525,7 @@ export const createEmployee = async (req: Request, res: Response, next: NextFunc
       passwordHash: password,
       firstName,
       lastName,
-      role,
+      role: role || UserRole.EMPLOYEE,
       companyId: new mongoose.Types.ObjectId(req.companyId),
       status: UserStatus.ACTIVE
     });
@@ -524,6 +538,10 @@ export const createEmployee = async (req: Request, res: Response, next: NextFunc
       employeeCode: employeeCode.trim(),
       department: department.trim(),
       designation: designation.trim(),
+      hourlyRate: hourlyRate != null ? Number(hourlyRate) : 25,
+      currency: currency ? currency.trim().toUpperCase() : 'USD',
+      overtimeMultiplier: overtimeMultiplier != null ? Number(overtimeMultiplier) : 1.5,
+      standardDailyHours: standardDailyHours != null ? Number(standardDailyHours) : 8,
       ...(managerId && { managerId: new mongoose.Types.ObjectId(managerId) })
     });
 
@@ -561,7 +579,21 @@ export const createEmployee = async (req: Request, res: Response, next: NextFunc
 export const updateEmployee = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    const { firstName, lastName, role, department, designation, managerId, status } = req.body;
+    const {
+      firstName,
+      lastName,
+      email,
+      role,
+      department,
+      designation,
+      employeeCode,
+      hourlyRate,
+      currency,
+      overtimeMultiplier,
+      standardDailyHours,
+      managerId,
+      status
+    } = req.body;
 
     const profile = await EmployeeProfile.findOne({ _id: id, companyId: req.companyId });
     if (!profile) {
@@ -570,6 +602,24 @@ export const updateEmployee = async (req: Request, res: Response, next: NextFunc
 
     if (department !== undefined) profile.department = department;
     if (designation !== undefined) profile.designation = designation;
+    if (employeeCode !== undefined && employeeCode.trim()) {
+      const trimmedCode = employeeCode.trim();
+      if (trimmedCode !== profile.employeeCode) {
+        const conflict = await EmployeeProfile.findOne({
+          companyId: req.companyId,
+          employeeCode: trimmedCode,
+          _id: { $ne: profile._id }
+        });
+        if (conflict) {
+          throw new AppError(`Employee code '${trimmedCode}' is already taken.`, 409);
+        }
+        profile.employeeCode = trimmedCode;
+      }
+    }
+    if (hourlyRate !== undefined) profile.hourlyRate = Number(hourlyRate);
+    if (currency !== undefined) profile.currency = currency.trim().toUpperCase();
+    if (overtimeMultiplier !== undefined) profile.overtimeMultiplier = Number(overtimeMultiplier);
+    if (standardDailyHours !== undefined) profile.standardDailyHours = Number(standardDailyHours);
     if (managerId !== undefined) {
       profile.managerId = managerId ? new mongoose.Types.ObjectId(managerId) : undefined;
     }
@@ -578,8 +628,18 @@ export const updateEmployee = async (req: Request, res: Response, next: NextFunc
     // Update corresponding User record
     const user = await User.findById(profile.userId);
     if (user) {
-      if (firstName !== undefined) user.firstName = firstName;
-      if (lastName !== undefined) user.lastName = lastName;
+      if (firstName !== undefined) user.firstName = firstName.trim();
+      if (lastName !== undefined) user.lastName = lastName.trim();
+      if (email !== undefined && email.trim()) {
+        const cleanEmail = email.trim().toLowerCase();
+        if (cleanEmail !== user.email) {
+          const emailConflict = await User.findOne({ email: cleanEmail, _id: { $ne: user._id } });
+          if (emailConflict) {
+            throw new AppError(`An account with email '${cleanEmail}' already exists.`, 409);
+          }
+          user.email = cleanEmail;
+        }
+      }
       if (role !== undefined) user.role = role;
       if (status !== undefined) user.status = status;
       await user.save();
@@ -607,26 +667,33 @@ export const updateEmployee = async (req: Request, res: Response, next: NextFunc
 export const deleteEmployee = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
+    const isPermanent = req.query.permanent === 'true' || req.body?.permanent === true;
     const profile = await EmployeeProfile.findOne({ _id: id, companyId: req.companyId });
     if (!profile) {
       throw new AppError('Employee not found', 404);
     }
 
-    // Soft delete / suspend user
-    await User.updateOne({ _id: profile.userId }, { status: UserStatus.INACTIVE });
+    if (isPermanent) {
+      await EmployeeProfile.deleteOne({ _id: profile._id });
+      await User.deleteOne({ _id: profile.userId });
+    } else {
+      // Soft delete / suspend user
+      await User.updateOne({ _id: profile.userId }, { status: UserStatus.INACTIVE });
+      await EmployeeProfile.updateOne({ _id: profile._id }, { currentStatus: ActivityState.OFFLINE });
+    }
 
     await logAudit({
       companyId: req.companyId!,
       userId: req.user?.userId,
       action: AuditAction.EMPLOYEE_DELETED,
       resource: 'Employee',
-      details: { employeeId: profile._id },
+      details: { employeeId: profile._id, isPermanent },
       ipAddress: req.ip
     });
 
     res.status(200).json({
       success: true,
-      message: 'Employee marked as inactive.'
+      message: isPermanent ? 'Employee permanently removed.' : 'Employee marked as inactive.'
     });
   } catch (error) {
     next(error);
