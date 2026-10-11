@@ -32,6 +32,10 @@ export interface IEmployeeProfileDocument extends Document {
   bonus?: number;
   deductions?: number;
   payrollNotes?: string;
+  paymentStatus?: 'PENDING' | 'APPROVED' | 'PAID';
+  paymentMethod?: 'BANK_TRANSFER' | 'UPI' | 'CASH' | 'CHEQUE';
+  paymentReference?: string;
+  paymentDate?: string;
   lastDateReset?: string; // "YYYY-MM-DD"
   createdAt: Date;
   updatedAt: Date;
@@ -69,6 +73,10 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfileDocument>(
     bonus: { type: Number, default: 0 },
     deductions: { type: Number, default: 0 },
     payrollNotes: { type: String, default: '' },
+    paymentStatus: { type: String, enum: ['PENDING', 'APPROVED', 'PAID'], default: 'PENDING' },
+    paymentMethod: { type: String, enum: ['BANK_TRANSFER', 'UPI', 'CASH', 'CHEQUE'], default: 'BANK_TRANSFER' },
+    paymentReference: { type: String, default: '' },
+    paymentDate: { type: String, default: '' },
     lastDateReset: { type: String }
   },
   { timestamps: true }

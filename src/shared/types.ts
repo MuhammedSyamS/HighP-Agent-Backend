@@ -424,6 +424,10 @@ export interface PayrollEmployeeItem {
   bonus?: number;
   deductions?: number;
   payrollNotes?: string;
+  paymentStatus?: 'PENDING' | 'APPROVED' | 'PAID';
+  paymentMethod?: 'BANK_TRANSFER' | 'UPI' | 'CASH' | 'CHEQUE';
+  paymentReference?: string;
+  paymentDate?: string;
   totalShiftSeconds: number;
   activeSeconds: number;
   idleSeconds: number;
@@ -445,6 +449,9 @@ export interface PayrollSummary {
   totalBonus?: number;
   totalDeductions?: number;
   totalNetPay?: number;
+  totalPaidAmount?: number;
+  totalPendingAmount?: number;
+  settlementRate?: number;
   currency: string;
   totalBillableHours: number;
   totalActiveHours: number;

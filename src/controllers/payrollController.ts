@@ -2,7 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import {
   calculatePayrollSummary,
   getEmployeePayrollDetail,
-  updateEmployeeHourlyRate
+  updateEmployeeHourlyRate,
+  updateEmployeePayoutStatus,
+  bulkUpdateEmployeePayoutStatus,
+  applyBulkCompanyPayrollPolicy
 } from '../services/payrollService';
 import { AppError } from '../middleware/errorHandler';
 import { UserRole } from '../shared';
@@ -93,7 +96,11 @@ export const updateEmployeeRate = async (
       customOvertimePayment,
       bonus,
       deductions,
-      payrollNotes
+      payrollNotes,
+      paymentStatus,
+      paymentMethod,
+      paymentReference,
+      paymentDate
     } = req.body;
 
     const updated = await updateEmployeeHourlyRate(req.companyId!, employeeId, {
@@ -107,7 +114,11 @@ export const updateEmployeeRate = async (
       customOvertimePayment,
       bonus,
       deductions,
-      payrollNotes
+      payrollNotes,
+      paymentStatus,
+      paymentMethod,
+      paymentReference,
+      paymentDate
     });
 
     emitToCompany(req.companyId!, 'payroll:updated', {
@@ -119,6 +130,124 @@ export const updateEmployeeRate = async (
       success: true,
       message: 'Employee payroll compensation and overtime settings updated successfully.',
       data: updated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updatePayoutStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (
+      req.user?.role !== UserRole.OWNER &&
+      req.user?.role !== UserRole.ADMIN &&
+      req.user?.role !== UserRole.HR
+    ) {
+      throw new AppError('Forbidden: Only HR / Admin can update payment settlement status', 403);
+    }
+
+    const { employeeId } = req.params;
+    const { paymentStatus, paymentMethod, paymentReference, paymentDate } = req.body;
+
+    if (!paymentStatus || !['PENDING', 'APPROVED', 'PAID'].includes(paymentStatus)) {
+      throw new AppError('Valid paymentStatus (PENDING, APPROVED, PAID) is required', 400);
+    }
+
+    const updated = await updateEmployeePayoutStatus(req.companyId!, employeeId, {
+      paymentStatus,
+      paymentMethod,
+      paymentReference,
+      paymentDate
+    });
+
+    emitToCompany(req.companyId!, 'payroll:updated', {
+      employeeId,
+      paymentStatus,
+      updatedAt: new Date().toISOString()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Payout status marked as ${paymentStatus}.`,
+      data: updated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkUpdatePayoutStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (
+      req.user?.role !== UserRole.OWNER &&
+      req.user?.role !== UserRole.ADMIN &&
+      req.user?.role !== UserRole.HR
+    ) {
+      throw new AppError('Forbidden: Only HR / Admin can update payment settlement status', 403);
+    }
+
+    const { employeeIds, paymentStatus, paymentMethod, paymentReference, paymentDate } = req.body;
+
+    if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
+      throw new AppError('employeeIds must be a non-empty array', 400);
+    }
+
+    if (!paymentStatus || !['PENDING', 'APPROVED', 'PAID'].includes(paymentStatus)) {
+      throw new AppError('Valid paymentStatus (PENDING, APPROVED, PAID) is required', 400);
+    }
+
+    const result = await bulkUpdateEmployeePayoutStatus(req.companyId!, employeeIds, {
+      paymentStatus,
+      paymentMethod,
+      paymentReference,
+      paymentDate
+    });
+
+    emitToCompany(req.companyId!, 'payroll:updated', {
+      employeeIds,
+      paymentStatus,
+      updatedAt: new Date().toISOString()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Bulk settlement updated: ${result.modifiedCount} employees marked as ${paymentStatus}.`,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkUpdateCompanyPolicy = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (req.user?.role !== UserRole.OWNER && req.user?.role !== UserRole.ADMIN) {
+      throw new AppError('Forbidden: Only Admin / Owner can configure company-wide payroll policy', 403);
+    }
+
+    const result = await applyBulkCompanyPayrollPolicy(req.companyId!, req.body);
+
+    emitToCompany(req.companyId!, 'payroll:policy-updated', {
+      appliedPolicy: result.appliedPolicy,
+      updatedAt: new Date().toISOString()
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Company-wide payroll policy applied to ${result.modifiedCount} employee profiles.`,
+      data: result
     });
   } catch (error) {
     next(error);
@@ -166,6 +295,10 @@ export const exportPayrollCsv = async (
       'Deductions',
       'Gross Salary',
       'Net Payout',
+      'Payment Status',
+      'Payment Method',
+      'Payment Reference',
+      'Payment Date',
       'Payroll Notes'
     ];
 
@@ -178,6 +311,10 @@ export const exportPayrollCsv = async (
       const deductions = (item.deductions || 0).toFixed(2);
       const netPay = (item.netPay != null ? item.netPay : item.grossPay).toFixed(2);
       const notes = (item.payrollNotes || '').replace(/"/g, '""');
+      const pStatus = item.paymentStatus || 'PENDING';
+      const pMethod = item.paymentMethod || 'BANK_TRANSFER';
+      const pRef = (item.paymentReference || '').replace(/"/g, '""');
+      const pDate = item.paymentDate || '';
 
       return [
         `"${item.employeeCode}"`,
@@ -204,6 +341,10 @@ export const exportPayrollCsv = async (
         deductions,
         item.grossPay.toFixed(2),
         netPay,
+        pStatus,
+        pMethod,
+        `"${pRef}"`,
+        `"${pDate}"`,
         `"${notes}"`
       ].join(',');
     });

@@ -504,6 +504,17 @@ export const createEmployee = async (req: Request, res: Response, next: NextFunc
       currency,
       overtimeMultiplier,
       standardDailyHours,
+      overtimeRateMode,
+      overtimeFixedRate,
+      overtimeEnabled,
+      customOvertimePayment,
+      bonus,
+      deductions,
+      payrollNotes,
+      paymentStatus,
+      paymentMethod,
+      paymentReference,
+      paymentDate,
       managerId
     } = req.body;
 
@@ -543,6 +554,17 @@ export const createEmployee = async (req: Request, res: Response, next: NextFunc
       currency: currency ? currency.trim().toUpperCase() : 'INR',
       overtimeMultiplier: overtimeMultiplier != null ? Number(overtimeMultiplier) : 1.5,
       standardDailyHours: standardDailyHours != null ? Number(standardDailyHours) : 8,
+      overtimeRateMode: overtimeRateMode === 'FIXED' ? 'FIXED' : 'MULTIPLIER',
+      overtimeFixedRate: overtimeFixedRate != null ? Number(overtimeFixedRate) : 0,
+      overtimeEnabled: overtimeEnabled !== false,
+      customOvertimePayment: customOvertimePayment != null ? Number(customOvertimePayment) : 0,
+      bonus: bonus != null ? Number(bonus) : 0,
+      deductions: deductions != null ? Number(deductions) : 0,
+      payrollNotes: payrollNotes ? String(payrollNotes).trim() : '',
+      paymentStatus: paymentStatus || 'PENDING',
+      paymentMethod: paymentMethod || 'BANK_TRANSFER',
+      paymentReference: paymentReference ? String(paymentReference).trim() : '',
+      paymentDate: paymentDate ? String(paymentDate).trim() : '',
       ...(managerId && { managerId: new mongoose.Types.ObjectId(managerId) })
     });
 
@@ -592,6 +614,17 @@ export const updateEmployee = async (req: Request, res: Response, next: NextFunc
       currency,
       overtimeMultiplier,
       standardDailyHours,
+      overtimeRateMode,
+      overtimeFixedRate,
+      overtimeEnabled,
+      customOvertimePayment,
+      bonus,
+      deductions,
+      payrollNotes,
+      paymentStatus,
+      paymentMethod,
+      paymentReference,
+      paymentDate,
       managerId,
       status
     } = req.body;
@@ -621,6 +654,17 @@ export const updateEmployee = async (req: Request, res: Response, next: NextFunc
     if (currency !== undefined) profile.currency = currency.trim().toUpperCase();
     if (overtimeMultiplier !== undefined) profile.overtimeMultiplier = Number(overtimeMultiplier);
     if (standardDailyHours !== undefined) profile.standardDailyHours = Number(standardDailyHours);
+    if (overtimeRateMode !== undefined) profile.overtimeRateMode = overtimeRateMode === 'FIXED' ? 'FIXED' : 'MULTIPLIER';
+    if (overtimeFixedRate !== undefined) profile.overtimeFixedRate = Number(overtimeFixedRate);
+    if (overtimeEnabled !== undefined) profile.overtimeEnabled = Boolean(overtimeEnabled);
+    if (customOvertimePayment !== undefined) profile.customOvertimePayment = Number(customOvertimePayment);
+    if (bonus !== undefined) profile.bonus = Number(bonus);
+    if (deductions !== undefined) profile.deductions = Number(deductions);
+    if (payrollNotes !== undefined) profile.payrollNotes = String(payrollNotes).trim();
+    if (paymentStatus !== undefined) profile.paymentStatus = paymentStatus;
+    if (paymentMethod !== undefined) profile.paymentMethod = paymentMethod;
+    if (paymentReference !== undefined) profile.paymentReference = String(paymentReference).trim();
+    if (paymentDate !== undefined) profile.paymentDate = String(paymentDate).trim();
     if (managerId !== undefined) {
       profile.managerId = managerId ? new mongoose.Types.ObjectId(managerId) : undefined;
     }

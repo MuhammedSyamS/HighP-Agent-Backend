@@ -214,6 +214,10 @@ export const calculatePayrollSummary = async (
       bonus,
       deductions,
       payrollNotes,
+      paymentStatus: (p as any).paymentStatus || 'PENDING',
+      paymentMethod: (p as any).paymentMethod || 'BANK_TRANSFER',
+      paymentReference: (p as any).paymentReference || '',
+      paymentDate: (p as any).paymentDate || '',
       totalShiftSeconds: empShiftSec,
       activeSeconds: empActiveSec,
       idleSeconds: empIdleSec,
@@ -233,12 +237,30 @@ export const calculatePayrollSummary = async (
   const employeeCount = profiles.length;
   const avgHourlyRate = employeeCount > 0 ? Math.round((totalRateSum / employeeCount) * 100) / 100 : 0;
 
+  let totalPaidAmount = 0;
+  let totalPendingAmount = 0;
+  for (const item of items) {
+    if (item.paymentStatus === 'PAID') {
+      totalPaidAmount += item.netPay;
+    } else {
+      totalPendingAmount += item.netPay;
+    }
+  }
+
+  const roundedNet = Math.round(totalNetPay * 100) / 100;
+  const roundedPaid = Math.round(totalPaidAmount * 100) / 100;
+  const roundedPending = Math.round(totalPendingAmount * 100) / 100;
+  const settlementRate = roundedNet > 0 ? Math.round((roundedPaid / roundedNet) * 100) : 0;
+
   return {
     totalGrossPay: Math.round(totalGrossPay * 100) / 100,
     totalRegularPay: Math.round(totalRegularPay * 100) / 100,
     totalBonus: Math.round(totalBonus * 100) / 100,
     totalDeductions: Math.round(totalDeductions * 100) / 100,
-    totalNetPay: Math.round(totalNetPay * 100) / 100,
+    totalNetPay: roundedNet,
+    totalPaidAmount: roundedPaid,
+    totalPendingAmount: roundedPending,
+    settlementRate,
     currency: items[0]?.currency || 'INR',
     totalBillableHours: Math.round((totalBillableSec / 3600) * 100) / 100,
     totalActiveHours: Math.round((totalActiveSec / 3600) * 100) / 100,
@@ -478,6 +500,10 @@ export const getEmployeePayrollDetail = async (
     bonus,
     deductions,
     payrollNotes,
+    paymentStatus: (profile as any).paymentStatus || 'PENDING',
+    paymentMethod: (profile as any).paymentMethod || 'BANK_TRANSFER',
+    paymentReference: (profile as any).paymentReference || '',
+    paymentDate: (profile as any).paymentDate || '',
     totalShiftSeconds: totalShiftSec,
     activeSeconds: totalActiveSec,
     idleSeconds: totalIdleSec,
@@ -515,6 +541,10 @@ export const updateEmployeeHourlyRate = async (
     bonus?: number;
     deductions?: number;
     payrollNotes?: string;
+    paymentStatus?: 'PENDING' | 'APPROVED' | 'PAID';
+    paymentMethod?: 'BANK_TRANSFER' | 'UPI' | 'CASH' | 'CHEQUE';
+    paymentReference?: string;
+    paymentDate?: string;
   }
 ) => {
   const companyObjId = new mongoose.Types.ObjectId(companyId);
@@ -554,6 +584,18 @@ export const updateEmployeeHourlyRate = async (
   if (data.payrollNotes !== undefined) {
     updateFields.payrollNotes = String(data.payrollNotes).trim();
   }
+  if (data.paymentStatus) {
+    updateFields.paymentStatus = data.paymentStatus;
+  }
+  if (data.paymentMethod) {
+    updateFields.paymentMethod = data.paymentMethod;
+  }
+  if (data.paymentReference !== undefined) {
+    updateFields.paymentReference = String(data.paymentReference).trim();
+  }
+  if (data.paymentDate !== undefined) {
+    updateFields.paymentDate = String(data.paymentDate).trim();
+  }
 
   const updatedProfile = await EmployeeProfile.findOneAndUpdate(
     { _id: empObjId, companyId: companyObjId },
@@ -566,4 +608,122 @@ export const updateEmployeeHourlyRate = async (
   }
 
   return updatedProfile;
+};
+
+export const updateEmployeePayoutStatus = async (
+  companyId: string,
+  employeeId: string,
+  statusData: {
+    paymentStatus: 'PENDING' | 'APPROVED' | 'PAID';
+    paymentMethod?: 'BANK_TRANSFER' | 'UPI' | 'CASH' | 'CHEQUE';
+    paymentReference?: string;
+    paymentDate?: string;
+  }
+) => {
+  const companyObjId = new mongoose.Types.ObjectId(companyId);
+  const empObjId = new mongoose.Types.ObjectId(employeeId);
+
+  const updateFields: any = {
+    paymentStatus: statusData.paymentStatus
+  };
+  if (statusData.paymentMethod) updateFields.paymentMethod = statusData.paymentMethod;
+  if (statusData.paymentReference !== undefined) updateFields.paymentReference = statusData.paymentReference.trim();
+  if (statusData.paymentDate !== undefined) updateFields.paymentDate = statusData.paymentDate.trim();
+
+  const updated = await EmployeeProfile.findOneAndUpdate(
+    { _id: empObjId, companyId: companyObjId },
+    { $set: updateFields },
+    { new: true }
+  ).populate('userId', 'firstName lastName email role');
+
+  if (!updated) {
+    throw new AppError('Employee profile not found', 404);
+  }
+
+  return updated;
+};
+
+export const applyBulkCompanyPayrollPolicy = async (
+  companyId: string,
+  policy: {
+    standardDailyHours?: number;
+    overtimeMultiplier?: number;
+    overtimeRateMode?: 'MULTIPLIER' | 'FIXED';
+    overtimeFixedRate?: number;
+    overtimeEnabled?: boolean;
+    defaultHourlyRate?: number;
+    defaultCurrency?: string;
+  }
+) => {
+  const companyObjId = new mongoose.Types.ObjectId(companyId);
+  const updateFields: any = {};
+
+  if (policy.standardDailyHours != null && policy.standardDailyHours > 0) {
+    updateFields.standardDailyHours = Number(policy.standardDailyHours);
+  }
+  if (policy.overtimeMultiplier != null && policy.overtimeMultiplier >= 1) {
+    updateFields.overtimeMultiplier = Number(policy.overtimeMultiplier);
+  }
+  if (policy.overtimeRateMode) {
+    updateFields.overtimeRateMode = policy.overtimeRateMode === 'FIXED' ? 'FIXED' : 'MULTIPLIER';
+  }
+  if (policy.overtimeFixedRate != null && policy.overtimeFixedRate >= 0) {
+    updateFields.overtimeFixedRate = Number(policy.overtimeFixedRate);
+  }
+  if (policy.overtimeEnabled !== undefined) {
+    updateFields.overtimeEnabled = Boolean(policy.overtimeEnabled);
+  }
+  if (policy.defaultHourlyRate != null && policy.defaultHourlyRate > 0) {
+    updateFields.hourlyRate = Number(policy.defaultHourlyRate);
+  }
+  if (policy.defaultCurrency) {
+    updateFields.currency = policy.defaultCurrency.trim().toUpperCase();
+  }
+
+  if (Object.keys(updateFields).length === 0) {
+    throw new AppError('No valid policy fields provided to update.', 400);
+  }
+
+  const result = await EmployeeProfile.updateMany(
+    { companyId: companyObjId },
+    { $set: updateFields }
+  );
+
+  return {
+    matchedCount: result.matchedCount,
+    modifiedCount: result.modifiedCount,
+    appliedPolicy: updateFields
+  };
+};
+
+export const bulkUpdateEmployeePayoutStatus = async (
+  companyId: string,
+  employeeIds: string[],
+  statusData: {
+    paymentStatus: 'PENDING' | 'APPROVED' | 'PAID';
+    paymentMethod?: 'BANK_TRANSFER' | 'UPI' | 'CASH' | 'CHEQUE';
+    paymentReference?: string;
+    paymentDate?: string;
+  }
+) => {
+  const companyObjId = new mongoose.Types.ObjectId(companyId);
+  const empObjIds = employeeIds.map((id) => new mongoose.Types.ObjectId(id));
+
+  const updateFields: any = {
+    paymentStatus: statusData.paymentStatus
+  };
+  if (statusData.paymentMethod) updateFields.paymentMethod = statusData.paymentMethod;
+  if (statusData.paymentReference !== undefined) updateFields.paymentReference = statusData.paymentReference.trim();
+  if (statusData.paymentDate !== undefined) updateFields.paymentDate = statusData.paymentDate.trim();
+
+  const result = await EmployeeProfile.updateMany(
+    { _id: { $in: empObjIds }, companyId: companyObjId },
+    { $set: updateFields }
+  );
+
+  return {
+    matchedCount: result.matchedCount,
+    modifiedCount: result.modifiedCount,
+    statusData
+  };
 };
