@@ -71,6 +71,10 @@ export interface IEmployeeProfile {
   todayActiveSeconds: number;
   todayIdleSeconds: number;
   todayBreakSeconds: number;
+  hourlyRate?: number;
+  currency?: string;
+  overtimeMultiplier?: number;
+  standardDailyHours?: number;
   todayShiftDuration?: number;
   todayShiftStartedAt?: string | null;
   todayShiftEndedAt?: string | null;
@@ -394,3 +398,59 @@ export interface IApplicationConfigResponse {
   }>;
 }
 
+export interface PayrollEmployeeItem {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  email: string;
+  department: string;
+  designation: string;
+  hourlyRate: number;
+  currency: string;
+  overtimeMultiplier: number;
+  standardDailyHours: number;
+  totalShiftSeconds: number;
+  activeSeconds: number;
+  idleSeconds: number;
+  breakSeconds: number;
+  billableSeconds: number;
+  regularHours: number;
+  overtimeHours: number;
+  totalHours: number;
+  regularPay: number;
+  overtimePay: number;
+  grossPay: number;
+  daysWorked: number;
+}
+
+export interface PayrollSummary {
+  totalGrossPay: number;
+  currency: string;
+  totalBillableHours: number;
+  totalActiveHours: number;
+  totalIdleHours: number;
+  totalOvertimeHours: number;
+  totalOvertimePay: number;
+  employeeCount: number;
+  avgHourlyRate: number;
+  periodStart: string;
+  periodEnd: string;
+  payIdleTime: boolean;
+  items: PayrollEmployeeItem[];
+}
+
+export interface PayrollDailyEntry {
+  date: string;
+  dayOfWeek: string;
+  status: string;
+  shiftSeconds: number;
+  activeSeconds: number;
+  idleSeconds: number;
+  breakSeconds: number;
+  billableSeconds: number;
+  regularHours: number;
+  overtimeHours: number;
+  dailyEarnings: number;
+  firstStart?: string;
+  lastEnd?: string;
+}

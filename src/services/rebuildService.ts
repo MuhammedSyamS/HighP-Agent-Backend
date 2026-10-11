@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { ActivityEvent } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
+import { WebsiteActivity } from '../models/WebsiteActivity';
 import { EmployeeProfile } from '../models/EmployeeProfile';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { DailySummary } from '../models/DailySummary';
@@ -35,19 +36,19 @@ export const rebuildEmployeeDay = async (
   // Determine authoritative day boundaries in company timezone
   const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(dateStr, companyTimezone);
 
-  // 1. Fetch all authoritative ActivityEvents for this day (exclude internal self-monitoring & legacy synthetic live events)
+  // 1. Fetch all authoritative ActivityEvents for this day (exclude internal self-monitoring)
   const events = await ActivityEvent.find({
     companyId: companyObjId,
     employeeId: employeeObjId,
     startedAt: { $gte: startOfDay, $lte: endOfDay },
-    eventId: { $not: /^live-/ },
     applicationName: { $not: /highp|internal workforce|highphaus|electron/i }
   })
     .sort({ startedAt: 1 })
     .lean();
 
-  // 2. Aggregate application usage from events
+  // 2. Aggregate application and website usage from events
   const appMap: Record<string, { duration: number; category: string; lastUsed: Date }> = {};
+  const webMap: Record<string, { duration: number; browser: string; lastUsed: Date }> = {};
   let totalActiveSeconds = 0;
   let totalIdleSeconds = 0;
 
@@ -55,24 +56,65 @@ export const rebuildEmployeeDay = async (
     const dur = ev.durationSeconds || 0;
     if (dur <= 0) continue;
 
-    if (ev.type === ActivityEventType.IDLE_INTERVAL) {
-      totalIdleSeconds += dur;
-    } else {
-      totalActiveSeconds += dur;
-      const appName = ev.applicationName.trim() || 'Unknown Application';
-      const cat = determineCategory(appName, categories);
+    const isIdle =
+      ev.type === ActivityEventType.IDLE_INTERVAL ||
+      ev.type === ActivityEventType.IDLE_START ||
+      ev.type === ActivityEventType.IDLE_END;
 
-      if (!appMap[appName]) {
-        appMap[appName] = { duration: 0, category: cat, lastUsed: ev.endedAt };
+    const isApp =
+      ev.type === ActivityEventType.APPLICATION_FOCUS ||
+      ev.type === ActivityEventType.APP_FOCUS_END ||
+      ev.type === ActivityEventType.APP_FOCUS_START;
+
+    const isWeb =
+      ev.type === ActivityEventType.WEBSITE_FOCUS_END ||
+      ev.type === ActivityEventType.WEBSITE_FOCUS_START;
+
+    if (isIdle) {
+      totalIdleSeconds += dur;
+    } else if (isApp) {
+      totalActiveSeconds += dur;
+      const appName = ev.applicationName?.trim() || '';
+      if (
+        appName &&
+        appName.toLowerCase() !== 'unknown application' &&
+        appName.toLowerCase() !== 'system idle' &&
+        appName.toLowerCase() !== 'system' &&
+        appName.toLowerCase() !== 'none'
+      ) {
+        const cat = determineCategory(appName, categories);
+        if (!appMap[appName]) {
+          appMap[appName] = { duration: 0, category: cat, lastUsed: ev.endedAt };
+        }
+        appMap[appName].duration += dur;
+        if (ev.endedAt > appMap[appName].lastUsed) {
+          appMap[appName].lastUsed = ev.endedAt;
+        }
       }
-      appMap[appName].duration += dur;
-      if (ev.endedAt > appMap[appName].lastUsed) {
-        appMap[appName].lastUsed = ev.endedAt;
+    } else if (isWeb && ev.domain) {
+      const domain = ev.domain.toLowerCase().trim();
+      const browser = ev.applicationName || 'Google Chrome';
+      if (domain) {
+        if (!webMap[domain]) {
+          webMap[domain] = { duration: 0, browser, lastUsed: ev.endedAt };
+        }
+        webMap[domain].duration += dur;
+        if (ev.endedAt > webMap[domain].lastUsed) {
+          webMap[domain].lastUsed = ev.endedAt;
+        }
       }
     }
   }
 
-  // 3. Atomically reconcile ApplicationUsage collection for this day
+  // 3. Clean up any invalid or legacy placeholder entries in ApplicationUsage
+  await ApplicationUsage.deleteMany({
+    companyId: companyObjId,
+    employeeId: employeeObjId,
+    date: dateStr,
+    applicationName: { $in: ['Unknown Application', 'System Idle', 'None', 'System', 'unknown application'] }
+  });
+
+  // Atomically reconcile ApplicationUsage collection for this day
   for (const [appName, stats] of Object.entries(appMap)) {
     await ApplicationUsage.findOneAndUpdate(
       {
@@ -85,6 +127,26 @@ export const rebuildEmployeeDay = async (
         $set: {
           totalSeconds: stats.duration,
           category: stats.category,
+          lastUsedAt: stats.lastUsed
+        }
+      },
+      { upsert: true, new: true }
+    );
+  }
+
+  // Atomically reconcile WebsiteActivity collection for this day
+  for (const [domain, stats] of Object.entries(webMap)) {
+    await WebsiteActivity.findOneAndUpdate(
+      {
+        companyId: companyObjId,
+        employeeId: employeeObjId,
+        date: dateStr,
+        domain
+      },
+      {
+        $set: {
+          totalSeconds: stats.duration,
+          browser: stats.browser,
           lastUsedAt: stats.lastUsed
         }
       },

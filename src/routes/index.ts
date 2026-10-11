@@ -11,6 +11,7 @@ import agentRoutes from './agentRoutes';
 import deviceRoutes from './deviceRoutes';
 import settingRoutes from './settingRoutes';
 import auditLogRoutes from './auditLogRoutes';
+import payrollRoutes from './payrollRoutes';
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.use('/agent', agentRoutes);
 router.use('/devices', deviceRoutes);
 router.use('/settings', settingRoutes);
 router.use('/audit-logs', auditLogRoutes);
+router.use('/payroll', payrollRoutes);
 
 export default router;
 

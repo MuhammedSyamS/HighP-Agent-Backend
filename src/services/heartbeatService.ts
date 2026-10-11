@@ -8,6 +8,7 @@ import { TrackedApplication } from '../models/TrackedApplication';
 import { DiscoveredApplication } from '../models/DiscoveredApplication';
 import { ActivityEvent } from '../models/ActivityEvent';
 import { ApplicationUsage } from '../models/ApplicationUsage';
+import { WebsiteActivity } from '../models/WebsiteActivity';
 import { Break } from '../models/Break';
 import { emitToCompany } from '../realtime/socketManager';
 import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
@@ -70,6 +71,7 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
   const company = await Company.findById(companyId);
   const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
   const todayStr = getDateStringInTimezone(now, companyTz);
+  const todayRange = getDayRangeInTimezone(todayStr, companyTz);
 
   // Midnight date reset for daily live counters
   if (profile.lastDateReset !== todayStr) {
@@ -150,10 +152,18 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     ? (trackedDoc.tracked && !trackedDoc.ignored ? 'TRACKED' : 'IGNORED')
     : 'UNKNOWN';
 
-  const isTracked = trackingState === 'TRACKED';
+  const isTracked = trackingState !== 'IGNORED';
 
   // If application is unknown and not system, record in DiscoveredApplication
-  if (!trackedDoc && exeLower && exeLower.endsWith('.exe') && !cleanApp.toLowerCase().includes('highp')) {
+  if (
+    !trackedDoc &&
+    exeLower &&
+    exeLower.endsWith('.exe') &&
+    exeLower !== 'unknown.exe' &&
+    exeLower !== 'system.exe' &&
+    !cleanApp.toLowerCase().includes('highp') &&
+    cleanApp.toLowerCase() !== 'unknown application'
+  ) {
     DiscoveredApplication.findOneAndUpdate(
       { companyId: new mongoose.Types.ObjectId(companyId), executableName: exeLower },
       {
@@ -173,6 +183,10 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
 
   const isValidApp =
     cleanApp &&
+    cleanApp.toLowerCase() !== 'unknown application' &&
+    cleanApp.toLowerCase() !== 'none' &&
+    cleanApp.toLowerCase() !== 'system' &&
+    cleanApp.toLowerCase() !== 'system idle' &&
     !cleanApp.toLowerCase().includes('highp') &&
     !cleanApp.toLowerCase().includes('electron') &&
     !cleanApp.toLowerCase().includes('internal workforce') &&
@@ -408,7 +422,22 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
         });
       }
 
-      // Persist into ApplicationUsage
+      // Persist into ApplicationUsage with cumulative daily duration
+      const completedAgg = await ActivityEvent.aggregate([
+        {
+          $match: {
+            companyId: new mongoose.Types.ObjectId(companyId),
+            employeeId: profile._id,
+            applicationName: cleanApp,
+            status: 'COMPLETED',
+            startedAt: { $gte: todayRange.start, $lte: todayRange.end }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$durationSeconds' } } }
+      ]);
+      const completedSec = completedAgg[0]?.total || 0;
+      const liveTotalSeconds = Math.max(durSeconds, completedSec + durSeconds);
+
       await ApplicationUsage.findOneAndUpdate(
         {
           companyId: new mongoose.Types.ObjectId(companyId),
@@ -417,11 +446,53 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
           applicationName: cleanApp
         },
         {
-          $max: { totalSeconds: durSeconds },
-          $set: { category: trackedDoc?.category || 'Other', lastUsedAt: now }
+          $set: {
+            totalSeconds: liveTotalSeconds,
+            category: trackedDoc?.category || 'Other',
+            lastUsedAt: now
+          }
         },
         { upsert: true }
       );
+
+      // Persist into WebsiteActivity if website domain is reported
+      if (website && website.domain) {
+        const cleanWebDomain = String(website.domain).toLowerCase().trim();
+        if (cleanWebDomain) {
+          const completedWebAgg = await ActivityEvent.aggregate([
+            {
+              $match: {
+                companyId: new mongoose.Types.ObjectId(companyId),
+                employeeId: profile._id,
+                domain: cleanWebDomain,
+                status: 'COMPLETED',
+                startedAt: { $gte: todayRange.start, $lte: todayRange.end }
+              }
+            },
+            { $group: { _id: null, total: { $sum: '$durationSeconds' } } }
+          ]);
+          const completedWebSec = completedWebAgg[0]?.total || 0;
+          const liveWebTotalSeconds = Math.max(durSeconds, completedWebSec + durSeconds);
+
+          await WebsiteActivity.findOneAndUpdate(
+            {
+              companyId: new mongoose.Types.ObjectId(companyId),
+              employeeId: profile._id,
+              date: todayStr,
+              domain: cleanWebDomain
+            },
+            {
+              $set: {
+                totalSeconds: liveWebTotalSeconds,
+                browser: cleanApp,
+                lastUsedAt: now,
+                sessionId: profile.currentSessionId
+              }
+            },
+            { upsert: true }
+          );
+        }
+      }
     } catch (persistErr: any) {
       console.warn('[HeartbeatService] Live activity persistence warning:', persistErr.message);
     }

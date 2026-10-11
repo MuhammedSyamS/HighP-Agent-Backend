@@ -293,7 +293,8 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     const topApps = await ApplicationUsage.find({
       companyId: req.companyId,
       employeeId: profile._id,
-      date: todayStr
+      date: todayStr,
+      applicationName: { $nin: ['Unknown Application', 'System Idle', 'None', 'System', 'unknown application'] }
     })
       .sort({ totalSeconds: -1 })
       .lean();

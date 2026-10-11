@@ -100,7 +100,55 @@ export const ingestActivityEvents = async (
     const ended = new Date(event.endedAt);
     const dateStr = getDateStringInTimezone(started, companyTz);
     const duration = Math.max(0, event.durationSeconds || Math.round((ended.getTime() - started.getTime()) / 1000));
-    const cleanAppName = event.applicationName.trim() || 'Unknown Application';
+
+    // Resolve application name and infer real app when missing or generic "unknown"
+    let cleanAppName = (event.applicationName || '').trim();
+    const rawTitle = (event.windowTitleSanitized || (event as any).windowTitle || '').trim();
+    const lowerTitle = rawTitle.toLowerCase();
+    const rawProc = (event.processName || (event as any).process || '').trim().toLowerCase();
+
+    if (!cleanAppName || cleanAppName.toLowerCase() === 'unknown application' || cleanAppName.toLowerCase() === 'unknown') {
+      if (rawTitle) {
+        if (lowerTitle.includes('google chrome') || lowerTitle.endsWith(' - chrome') || lowerTitle.includes('chrome')) {
+          cleanAppName = 'Google Chrome';
+        } else if (lowerTitle.includes('microsoft edge') || lowerTitle.endsWith(' - edge') || lowerTitle.includes('edge')) {
+          cleanAppName = 'Microsoft Edge';
+        } else if (lowerTitle.includes('antigravity ide') || lowerTitle.includes('antigravity')) {
+          cleanAppName = 'Antigravity IDE';
+        } else if (lowerTitle.includes('visual studio code') || lowerTitle.includes('vs code') || lowerTitle.endsWith(' - code')) {
+          cleanAppName = 'Visual Studio Code';
+        } else if (lowerTitle.includes('excel')) {
+          cleanAppName = 'Microsoft Excel';
+        } else if (lowerTitle.includes('word')) {
+          cleanAppName = 'Microsoft Word';
+        } else if (lowerTitle.includes('powerpoint')) {
+          cleanAppName = 'Microsoft PowerPoint';
+        } else if (lowerTitle.includes('slack')) {
+          cleanAppName = 'Slack';
+        } else if (lowerTitle.includes('teams')) {
+          cleanAppName = 'Microsoft Teams';
+        } else if (lowerTitle.includes('file explorer') || lowerTitle.includes('explorer')) {
+          cleanAppName = 'Windows File Explorer';
+        }
+      }
+
+      if (!cleanAppName || cleanAppName.toLowerCase() === 'unknown application' || cleanAppName.toLowerCase() === 'unknown') {
+        if (rawProc.includes('chrome')) cleanAppName = 'Google Chrome';
+        else if (rawProc.includes('msedge')) cleanAppName = 'Microsoft Edge';
+        else if (rawProc.includes('code')) cleanAppName = 'Visual Studio Code';
+        else if (rawProc.includes('antigravity')) cleanAppName = 'Antigravity IDE';
+        else if (rawProc.includes('excel')) cleanAppName = 'Microsoft Excel';
+        else if (rawProc.includes('winword')) cleanAppName = 'Microsoft Word';
+        else if (rawProc.includes('powerpnt')) cleanAppName = 'Microsoft PowerPoint';
+        else if (rawProc.includes('slack')) cleanAppName = 'Slack';
+        else if (rawProc.includes('teams')) cleanAppName = 'Microsoft Teams';
+        else if (rawProc.includes('explorer')) cleanAppName = 'Windows File Explorer';
+      }
+    }
+
+    if (!cleanAppName) {
+      cleanAppName = 'Unknown Application';
+    }
 
     try {
       // 1. Idempotency check: verify if eventId already processed for this company
@@ -205,8 +253,8 @@ export const ingestActivityEvents = async (
           sessionId: resolvedSessionId,
           ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
           type: event.type,
-          applicationName: cleanAppName || 'System Event',
-          processName: event.processName || 'system',
+          applicationName: 'System',
+          processName: 'system',
           category: 'System',
           startedAt: started,
           endedAt: ended,
@@ -237,7 +285,18 @@ export const ingestActivityEvents = async (
         event.type === ActivityEventType.WEBSITE_FOCUS_END;
 
       if (isWebsiteEventType) {
-        const domain = (event.domain || '').toLowerCase().trim();
+        const rawDomain = event.domain || (event as any).website?.domain || '';
+        const domain = rawDomain.toLowerCase().trim();
+        const rawBrowser = (event as any).website?.browser || (event as any).browser || '';
+        const browserName =
+          (cleanAppName && cleanAppName.toLowerCase() !== 'unknown application' && cleanAppName.toLowerCase() !== 'browser')
+            ? cleanAppName
+            : (rawBrowser && rawBrowser.toLowerCase() !== 'unknown application' ? rawBrowser : 'Google Chrome');
+        const procName =
+          (event.processName && event.processName.toLowerCase() !== 'unknown.exe' && event.processName.toLowerCase() !== 'unknown')
+            ? event.processName
+            : `${browserName.toLowerCase().replace(/\s+/g, '')}.exe`;
+
         await ActivityEvent.create({
           eventId: event.eventId,
           companyId: new mongoose.Types.ObjectId(companyId),
@@ -246,8 +305,8 @@ export const ingestActivityEvents = async (
           ...(resolvedDeviceId && { deviceId: resolvedDeviceId }),
           sequenceNumber: (event as any).sequenceNumber,
           type: event.type,
-          applicationName: cleanAppName,
-          processName: event.processName,
+          applicationName: browserName,
+          processName: procName,
           category: 'Browsers',
           windowTitleSanitized: event.windowTitleSanitized,
           domain: domain || undefined,
@@ -271,7 +330,7 @@ export const ingestActivityEvents = async (
             },
             {
               $inc: { totalSeconds: duration },
-              $set: { browser: cleanAppName, lastUsedAt: ended, sessionId: resolvedSessionId }
+              $set: { browser: browserName, lastUsedAt: ended, sessionId: resolvedSessionId }
             },
             { upsert: true, new: true }
           );
@@ -310,7 +369,13 @@ export const ingestActivityEvents = async (
 
       // Unknown applications: do NOT discard! Discover and track under 'Other' / UNKNOWN category
       if (!trackedDoc) {
-        if (exeName && exeName.endsWith('.exe')) {
+        if (
+          exeName &&
+          exeName.endsWith('.exe') &&
+          exeName !== 'unknown.exe' &&
+          exeName !== 'system.exe' &&
+          cleanAppName.toLowerCase() !== 'unknown application'
+        ) {
           await DiscoveredApplication.findOneAndUpdate(
             { companyId: new mongoose.Types.ObjectId(companyId), executableName: exeName },
             {
@@ -396,7 +461,12 @@ export const ingestActivityEvents = async (
       }
 
       // 2. Aggregate into Daily Application Usage
-      if (isAppTracking && duration > 0) {
+      if (
+        isAppTracking &&
+        duration > 0 &&
+        cleanAppName.toLowerCase() !== 'unknown application' &&
+        cleanAppName.toLowerCase() !== 'system idle'
+      ) {
         await ApplicationUsage.findOneAndUpdate(
           {
             companyId: new mongoose.Types.ObjectId(companyId),

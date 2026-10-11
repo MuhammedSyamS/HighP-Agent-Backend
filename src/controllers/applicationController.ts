@@ -12,7 +12,10 @@ export const getCompanyApplicationUsage = async (req: Request, res: Response, ne
     const { startDate, endDate, date } = req.query;
     const companyId = new mongoose.Types.ObjectId(req.companyId);
 
-    const matchQuery: any = { companyId };
+    const matchQuery: any = {
+      companyId,
+      applicationName: { $nin: ['Unknown Application', 'System Idle', 'None', 'System', 'unknown application'] }
+    };
     if (date) {
       matchQuery.date = date;
     } else if (startDate || endDate) {
@@ -134,7 +137,8 @@ export const getEmployeeApplicationUsage = async (req: Request, res: Response, n
 
     const matchQuery: any = {
       companyId,
-      employeeId: new mongoose.Types.ObjectId(employeeId)
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      applicationName: { $nin: ['Unknown Application', 'System Idle', 'None', 'System', 'unknown application'] }
     };
 
     if (date) {

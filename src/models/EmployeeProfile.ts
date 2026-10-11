@@ -21,6 +21,10 @@ export interface IEmployeeProfileDocument extends Document {
   todayActiveSeconds: number;
   todayIdleSeconds: number;
   todayBreakSeconds: number;
+  hourlyRate?: number;
+  currency?: string;
+  overtimeMultiplier?: number;
+  standardDailyHours?: number;
   lastDateReset?: string; // "YYYY-MM-DD"
   createdAt: Date;
   updatedAt: Date;
@@ -47,6 +51,10 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfileDocument>(
     todayActiveSeconds: { type: Number, default: 0 },
     todayIdleSeconds: { type: Number, default: 0 },
     todayBreakSeconds: { type: Number, default: 0 },
+    hourlyRate: { type: Number, default: 25 },
+    currency: { type: String, default: 'USD' },
+    overtimeMultiplier: { type: Number, default: 1.5 },
+    standardDailyHours: { type: Number, default: 8 },
     lastDateReset: { type: String }
   },
   { timestamps: true }
