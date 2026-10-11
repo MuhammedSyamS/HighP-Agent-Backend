@@ -52,7 +52,7 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfileDocument>(
     todayIdleSeconds: { type: Number, default: 0 },
     todayBreakSeconds: { type: Number, default: 0 },
     hourlyRate: { type: Number, default: 25 },
-    currency: { type: String, default: 'USD' },
+    currency: { type: String, default: 'INR' },
     overtimeMultiplier: { type: Number, default: 1.5 },
     standardDailyHours: { type: Number, default: 8 },
     lastDateReset: { type: String }

@@ -83,7 +83,7 @@ export const calculatePayrollSummary = async (
     const name = `${firstName} ${lastName}`.trim() || p.employeeCode;
 
     const hourlyRate = p.hourlyRate != null && p.hourlyRate >= 0 ? p.hourlyRate : 25;
-    const currency = p.currency || 'USD';
+    const currency = p.currency || 'INR';
     const overtimeMultiplier = p.overtimeMultiplier != null && p.overtimeMultiplier >= 1 ? p.overtimeMultiplier : 1.5;
     const standardDailyHours = p.standardDailyHours != null && p.standardDailyHours > 0 ? p.standardDailyHours : 8;
 
@@ -205,7 +205,7 @@ export const calculatePayrollSummary = async (
 
   return {
     totalGrossPay: Math.round(totalGrossPay * 100) / 100,
-    currency: items[0]?.currency || 'USD',
+    currency: items[0]?.currency || 'INR',
     totalBillableHours: Math.round((totalBillableSec / 3600) * 100) / 100,
     totalActiveHours: Math.round((totalActiveSec / 3600) * 100) / 100,
     totalIdleHours: Math.round((totalIdleSec / 3600) * 100) / 100,
@@ -266,7 +266,7 @@ export const getEmployeePayrollDetail = async (
     .lean();
 
   const hourlyRate = profile.hourlyRate != null && profile.hourlyRate >= 0 ? profile.hourlyRate : 25;
-  const currency = profile.currency || 'USD';
+  const currency = profile.currency || 'INR';
   const overtimeMultiplier = profile.overtimeMultiplier != null && profile.overtimeMultiplier >= 1 ? profile.overtimeMultiplier : 1.5;
   const standardDailyHours = profile.standardDailyHours != null && profile.standardDailyHours > 0 ? profile.standardDailyHours : 8;
 

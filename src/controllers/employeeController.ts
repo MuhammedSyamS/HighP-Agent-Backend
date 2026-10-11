@@ -15,6 +15,7 @@ import { Break } from '../models/Break';
 import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { Company } from '../models/Company';
 import { liveTelemetryService } from '../services/liveTelemetryService';
+import { emitToCompany } from '../realtime/socketManager';
 
 
 export const getEmployees = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -539,7 +540,7 @@ export const createEmployee = async (req: Request, res: Response, next: NextFunc
       department: department.trim(),
       designation: designation.trim(),
       hourlyRate: hourlyRate != null ? Number(hourlyRate) : 25,
-      currency: currency ? currency.trim().toUpperCase() : 'USD',
+      currency: currency ? currency.trim().toUpperCase() : 'INR',
       overtimeMultiplier: overtimeMultiplier != null ? Number(overtimeMultiplier) : 1.5,
       standardDailyHours: standardDailyHours != null ? Number(standardDailyHours) : 8,
       ...(managerId && { managerId: new mongoose.Types.ObjectId(managerId) })
@@ -675,12 +676,30 @@ export const deleteEmployee = async (req: Request, res: Response, next: NextFunc
 
     if (isPermanent) {
       await EmployeeProfile.deleteOne({ _id: profile._id });
-      await User.deleteOne({ _id: profile.userId });
+      if (profile.userId) {
+        await User.deleteOne({ _id: profile.userId });
+      }
+      // Cascade delete all orphaned records for this employee
+      await AttendanceSession.deleteMany({ employeeId: profile._id });
+      await ActivityEvent.deleteMany({ employeeId: profile._id });
+      await ApplicationUsage.deleteMany({ employeeId: profile._id });
+      await WebsiteActivity.deleteMany({ employeeId: profile._id });
+      await DailySummary.deleteMany({ employeeId: profile._id });
+      await Break.deleteMany({ employeeProfileId: profile._id });
     } else {
       // Soft delete / suspend user
-      await User.updateOne({ _id: profile.userId }, { status: UserStatus.INACTIVE });
+      if (profile.userId) {
+        await User.updateOne({ _id: profile.userId }, { status: UserStatus.INACTIVE });
+      }
       await EmployeeProfile.updateOne({ _id: profile._id }, { currentStatus: ActivityState.OFFLINE });
     }
+
+    // Emit real-time deletion event to all connected company clients
+    emitToCompany(req.companyId!, 'employee:deleted', {
+      employeeProfileId: profile._id.toString(),
+      employeeCode: profile.employeeCode,
+      isPermanent
+    });
 
     await logAudit({
       companyId: req.companyId!,
