@@ -75,6 +75,13 @@ export interface IEmployeeProfile {
   currency?: string;
   overtimeMultiplier?: number;
   standardDailyHours?: number;
+  overtimeRateMode?: 'MULTIPLIER' | 'FIXED';
+  overtimeFixedRate?: number;
+  overtimeEnabled?: boolean;
+  customOvertimePayment?: number;
+  bonus?: number;
+  deductions?: number;
+  payrollNotes?: string;
   todayShiftDuration?: number;
   todayShiftStartedAt?: string | null;
   todayShiftEndedAt?: string | null;
@@ -409,6 +416,14 @@ export interface PayrollEmployeeItem {
   currency: string;
   overtimeMultiplier: number;
   standardDailyHours: number;
+  overtimeRateMode?: 'MULTIPLIER' | 'FIXED';
+  overtimeFixedRate?: number;
+  overtimeEnabled?: boolean;
+  effectiveOtRate?: number;
+  customOvertimePayment?: number;
+  bonus?: number;
+  deductions?: number;
+  payrollNotes?: string;
   totalShiftSeconds: number;
   activeSeconds: number;
   idleSeconds: number;
@@ -420,11 +435,16 @@ export interface PayrollEmployeeItem {
   regularPay: number;
   overtimePay: number;
   grossPay: number;
+  netPay: number;
   daysWorked: number;
 }
 
 export interface PayrollSummary {
   totalGrossPay: number;
+  totalRegularPay?: number;
+  totalBonus?: number;
+  totalDeductions?: number;
+  totalNetPay?: number;
   currency: string;
   totalBillableHours: number;
   totalActiveHours: number;

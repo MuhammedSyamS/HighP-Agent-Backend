@@ -25,6 +25,13 @@ export interface IEmployeeProfileDocument extends Document {
   currency?: string;
   overtimeMultiplier?: number;
   standardDailyHours?: number;
+  overtimeRateMode?: 'MULTIPLIER' | 'FIXED';
+  overtimeFixedRate?: number;
+  overtimeEnabled?: boolean;
+  customOvertimePayment?: number;
+  bonus?: number;
+  deductions?: number;
+  payrollNotes?: string;
   lastDateReset?: string; // "YYYY-MM-DD"
   createdAt: Date;
   updatedAt: Date;
@@ -55,6 +62,13 @@ const EmployeeProfileSchema = new Schema<IEmployeeProfileDocument>(
     currency: { type: String, default: 'INR' },
     overtimeMultiplier: { type: Number, default: 1.5 },
     standardDailyHours: { type: Number, default: 8 },
+    overtimeRateMode: { type: String, enum: ['MULTIPLIER', 'FIXED'], default: 'MULTIPLIER' },
+    overtimeFixedRate: { type: Number, default: 0 },
+    overtimeEnabled: { type: Boolean, default: true },
+    customOvertimePayment: { type: Number, default: 0 },
+    bonus: { type: Number, default: 0 },
+    deductions: { type: Number, default: 0 },
+    payrollNotes: { type: String, default: '' },
     lastDateReset: { type: String }
   },
   { timestamps: true }

@@ -6,6 +6,7 @@ import {
 } from '../services/payrollService';
 import { AppError } from '../middleware/errorHandler';
 import { UserRole } from '../shared';
+import { emitToCompany } from '../realtime/socketManager';
 
 export const getPayrollSummary = async (
   req: Request,
@@ -81,18 +82,42 @@ export const updateEmployeeRate = async (
     }
 
     const { employeeId } = req.params;
-    const { hourlyRate, currency, overtimeMultiplier, standardDailyHours } = req.body;
+    const {
+      hourlyRate,
+      currency,
+      overtimeMultiplier,
+      standardDailyHours,
+      overtimeRateMode,
+      overtimeFixedRate,
+      overtimeEnabled,
+      customOvertimePayment,
+      bonus,
+      deductions,
+      payrollNotes
+    } = req.body;
 
     const updated = await updateEmployeeHourlyRate(req.companyId!, employeeId, {
       hourlyRate,
       currency,
       overtimeMultiplier,
-      standardDailyHours
+      standardDailyHours,
+      overtimeRateMode,
+      overtimeFixedRate,
+      overtimeEnabled,
+      customOvertimePayment,
+      bonus,
+      deductions,
+      payrollNotes
+    });
+
+    emitToCompany(req.companyId!, 'payroll:updated', {
+      employeeId,
+      updatedAt: new Date().toISOString()
     });
 
     res.status(200).json({
       success: true,
-      message: 'Employee hourly compensation updated successfully.',
+      message: 'Employee payroll compensation and overtime settings updated successfully.',
       data: updated
     });
   } catch (error) {
@@ -122,22 +147,38 @@ export const exportPayrollCsv = async (
       'Email',
       'Department',
       'Designation',
-      'Hourly Rate',
+      'Base Hourly Rate',
       'Currency',
+      'Standard Daily Hours',
       'Days Worked',
       'Active Hours',
       'Idle Hours',
       'Billable Hours',
       'Regular Hours',
-      'Overtime Hours',
       'Regular Pay',
-      'Overtime Pay',
-      'Gross Salary'
+      'Overtime Mode',
+      'Effective OT Rate',
+      'Overtime Hours',
+      'Calculated OT Pay',
+      'Manual OT Adjustment',
+      'Total Overtime Pay',
+      'Performance Bonus',
+      'Deductions',
+      'Gross Salary',
+      'Net Payout',
+      'Payroll Notes'
     ];
 
     const rows = summary.items.map((item) => {
       const activeHrs = (item.activeSeconds / 3600).toFixed(2);
       const idleHrs = (item.idleSeconds / 3600).toFixed(2);
+      const effectiveOtRate = item.effectiveOtRate != null ? item.effectiveOtRate.toFixed(2) : (item.hourlyRate * item.overtimeMultiplier).toFixed(2);
+      const manualOt = (item.customOvertimePayment || 0).toFixed(2);
+      const bonus = (item.bonus || 0).toFixed(2);
+      const deductions = (item.deductions || 0).toFixed(2);
+      const netPay = (item.netPay != null ? item.netPay : item.grossPay).toFixed(2);
+      const notes = (item.payrollNotes || '').replace(/"/g, '""');
+
       return [
         `"${item.employeeCode}"`,
         `"${item.name.replace(/"/g, '""')}"`,
@@ -146,15 +187,24 @@ export const exportPayrollCsv = async (
         `"${item.designation}"`,
         item.hourlyRate.toFixed(2),
         item.currency,
+        item.standardDailyHours,
         item.daysWorked,
         activeHrs,
         idleHrs,
         item.totalHours.toFixed(2),
         item.regularHours.toFixed(2),
-        item.overtimeHours.toFixed(2),
         item.regularPay.toFixed(2),
+        item.overtimeRateMode || 'MULTIPLIER',
+        effectiveOtRate,
+        item.overtimeHours.toFixed(2),
+        (item.overtimePay - (item.customOvertimePayment || 0)).toFixed(2),
+        manualOt,
         item.overtimePay.toFixed(2),
-        item.grossPay.toFixed(2)
+        bonus,
+        deductions,
+        item.grossPay.toFixed(2),
+        netPay,
+        `"${notes}"`
       ].join(',');
     });
 

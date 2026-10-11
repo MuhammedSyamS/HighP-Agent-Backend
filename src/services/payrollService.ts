@@ -68,6 +68,10 @@ export const calculatePayrollSummary = async (
   }
 
   let totalGrossPay = 0;
+  let totalRegularPay = 0;
+  let totalBonus = 0;
+  let totalDeductions = 0;
+  let totalNetPay = 0;
   let totalBillableSec = 0;
   let totalActiveSec = 0;
   let totalIdleSec = 0;
@@ -86,6 +90,17 @@ export const calculatePayrollSummary = async (
     const currency = p.currency || 'INR';
     const overtimeMultiplier = p.overtimeMultiplier != null && p.overtimeMultiplier >= 1 ? p.overtimeMultiplier : 1.5;
     const standardDailyHours = p.standardDailyHours != null && p.standardDailyHours > 0 ? p.standardDailyHours : 8;
+    const overtimeRateMode: 'MULTIPLIER' | 'FIXED' = p.overtimeRateMode === 'FIXED' ? 'FIXED' : 'MULTIPLIER';
+    const overtimeFixedRate = p.overtimeFixedRate != null && p.overtimeFixedRate >= 0 ? p.overtimeFixedRate : 0;
+    const overtimeEnabled = p.overtimeEnabled !== false;
+    const customOtPayment = Number(p.customOvertimePayment || 0);
+    const bonus = Number(p.bonus || 0);
+    const deductions = Number(p.deductions || 0);
+    const payrollNotes = p.payrollNotes || '';
+
+    const effectiveOtRate = overtimeRateMode === 'FIXED' && overtimeFixedRate > 0
+      ? overtimeFixedRate
+      : Math.round(hourlyRate * overtimeMultiplier * 100) / 100;
 
     const empSummaries = summaryMapByEmp.get(empId) || [];
 
@@ -163,10 +178,16 @@ export const calculatePayrollSummary = async (
     }
 
     const regPay = Math.round(empRegHrs * hourlyRate * 100) / 100;
-    const otPay = Math.round(empOtHrs * hourlyRate * overtimeMultiplier * 100) / 100;
+    const calculatedOtPay = overtimeEnabled ? Math.round(empOtHrs * effectiveOtRate * 100) / 100 : 0;
+    const otPay = Math.round((calculatedOtPay + customOtPayment) * 100) / 100;
     const grossPay = Math.round((regPay + otPay) * 100) / 100;
+    const netPay = Math.round((grossPay + bonus - deductions) * 100) / 100;
 
     totalGrossPay += grossPay;
+    totalRegularPay += regPay;
+    totalBonus += bonus;
+    totalDeductions += deductions;
+    totalNetPay += netPay;
     totalBillableSec += empBillableSec;
     totalActiveSec += empActiveSec;
     totalIdleSec += empIdleSec;
@@ -185,6 +206,14 @@ export const calculatePayrollSummary = async (
       currency,
       overtimeMultiplier,
       standardDailyHours,
+      overtimeRateMode,
+      overtimeFixedRate,
+      overtimeEnabled,
+      effectiveOtRate,
+      customOvertimePayment: customOtPayment,
+      bonus,
+      deductions,
+      payrollNotes,
       totalShiftSeconds: empShiftSec,
       activeSeconds: empActiveSec,
       idleSeconds: empIdleSec,
@@ -196,6 +225,7 @@ export const calculatePayrollSummary = async (
       regularPay: regPay,
       overtimePay: otPay,
       grossPay,
+      netPay,
       daysWorked
     };
   });
@@ -205,6 +235,10 @@ export const calculatePayrollSummary = async (
 
   return {
     totalGrossPay: Math.round(totalGrossPay * 100) / 100,
+    totalRegularPay: Math.round(totalRegularPay * 100) / 100,
+    totalBonus: Math.round(totalBonus * 100) / 100,
+    totalDeductions: Math.round(totalDeductions * 100) / 100,
+    totalNetPay: Math.round(totalNetPay * 100) / 100,
     currency: items[0]?.currency || 'INR',
     totalBillableHours: Math.round((totalBillableSec / 3600) * 100) / 100,
     totalActiveHours: Math.round((totalActiveSec / 3600) * 100) / 100,
@@ -269,6 +303,17 @@ export const getEmployeePayrollDetail = async (
   const currency = profile.currency || 'INR';
   const overtimeMultiplier = profile.overtimeMultiplier != null && profile.overtimeMultiplier >= 1 ? profile.overtimeMultiplier : 1.5;
   const standardDailyHours = profile.standardDailyHours != null && profile.standardDailyHours > 0 ? profile.standardDailyHours : 8;
+  const overtimeRateMode: 'MULTIPLIER' | 'FIXED' = profile.overtimeRateMode === 'FIXED' ? 'FIXED' : 'MULTIPLIER';
+  const overtimeFixedRate = profile.overtimeFixedRate != null && profile.overtimeFixedRate >= 0 ? profile.overtimeFixedRate : 0;
+  const overtimeEnabled = profile.overtimeEnabled !== false;
+  const customOtPayment = Number(profile.customOvertimePayment || 0);
+  const bonus = Number(profile.bonus || 0);
+  const deductions = Number(profile.deductions || 0);
+  const payrollNotes = profile.payrollNotes || '';
+
+  const effectiveOtRate = overtimeRateMode === 'FIXED' && overtimeFixedRate > 0
+    ? overtimeFixedRate
+    : Math.round(hourlyRate * overtimeMultiplier * 100) / 100;
 
   let totalShiftSec = 0;
   let totalActiveSec = 0;
@@ -295,7 +340,8 @@ export const getEmployeePayrollDetail = async (
 
     const regHrs = Math.min(billableHrs, standardDailyHours);
     const otHrs = Math.max(0, billableHrs - standardDailyHours);
-    const dayEarnings = Math.round((regHrs * hourlyRate + otHrs * hourlyRate * overtimeMultiplier) * 100) / 100;
+    const dayOtPay = overtimeEnabled ? Math.round(otHrs * effectiveOtRate * 100) / 100 : 0;
+    const dayEarnings = Math.round((regHrs * hourlyRate + dayOtPay) * 100) / 100;
 
     if (billableHrs > 0) daysWorked++;
 
@@ -357,13 +403,14 @@ export const getEmployeePayrollDetail = async (
         totalRegHrs += (newReg - priorReg);
         totalOtHrs += (newOt - priorOt);
 
+        const todayOtPay = overtimeEnabled ? Math.round(newOt * effectiveOtRate * 100) / 100 : 0;
         existingToday.activeSeconds += deltaAct;
         existingToday.idleSeconds += deltaIdl;
         existingToday.shiftSeconds += (deltaAct + deltaIdl);
         existingToday.billableSeconds = newBillable;
         existingToday.regularHours = Math.round(newReg * 100) / 100;
         existingToday.overtimeHours = Math.round(newOt * 100) / 100;
-        existingToday.dailyEarnings = Math.round((newReg * hourlyRate + newOt * hourlyRate * overtimeMultiplier) * 100) / 100;
+        existingToday.dailyEarnings = Math.round((newReg * hourlyRate + todayOtPay) * 100) / 100;
       }
     } else if (liveAct > 0 || liveIdl > 0 || profile.currentStatus !== 'OFFLINE') {
       const shift = liveAct + liveIdl + liveBrk;
@@ -371,7 +418,8 @@ export const getEmployeePayrollDetail = async (
       const billableHrs = billable / 3600;
       const regHrs = Math.min(billableHrs, standardDailyHours);
       const otHrs = Math.max(0, billableHrs - standardDailyHours);
-      const dayEarnings = Math.round((regHrs * hourlyRate + otHrs * hourlyRate * overtimeMultiplier) * 100) / 100;
+      const todayOtPay = overtimeEnabled ? Math.round(otHrs * effectiveOtRate * 100) / 100 : 0;
+      const dayEarnings = Math.round((regHrs * hourlyRate + todayOtPay) * 100) / 100;
 
       if (billableHrs > 0) daysWorked++;
 
@@ -403,8 +451,10 @@ export const getEmployeePayrollDetail = async (
   }
 
   const regPay = Math.round(totalRegHrs * hourlyRate * 100) / 100;
-  const otPay = Math.round(totalOtHrs * hourlyRate * overtimeMultiplier * 100) / 100;
+  const calculatedOtPay = overtimeEnabled ? Math.round(totalOtHrs * effectiveOtRate * 100) / 100 : 0;
+  const otPay = Math.round((calculatedOtPay + customOtPayment) * 100) / 100;
   const grossPay = Math.round((regPay + otPay) * 100) / 100;
+  const netPay = Math.round((grossPay + bonus - deductions) * 100) / 100;
 
   const user = profile.userId as any;
   const name = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || profile.employeeCode;
@@ -420,6 +470,14 @@ export const getEmployeePayrollDetail = async (
     currency,
     overtimeMultiplier,
     standardDailyHours,
+    overtimeRateMode,
+    overtimeFixedRate,
+    overtimeEnabled,
+    effectiveOtRate,
+    customOvertimePayment: customOtPayment,
+    bonus,
+    deductions,
+    payrollNotes,
     totalShiftSeconds: totalShiftSec,
     activeSeconds: totalActiveSec,
     idleSeconds: totalIdleSec,
@@ -431,6 +489,7 @@ export const getEmployeePayrollDetail = async (
     regularPay: regPay,
     overtimePay: otPay,
     grossPay,
+    netPay,
     daysWorked
   };
 
@@ -449,6 +508,13 @@ export const updateEmployeeHourlyRate = async (
     currency?: string;
     overtimeMultiplier?: number;
     standardDailyHours?: number;
+    overtimeRateMode?: 'MULTIPLIER' | 'FIXED';
+    overtimeFixedRate?: number;
+    overtimeEnabled?: boolean;
+    customOvertimePayment?: number;
+    bonus?: number;
+    deductions?: number;
+    payrollNotes?: string;
   }
 ) => {
   const companyObjId = new mongoose.Types.ObjectId(companyId);
@@ -466,6 +532,27 @@ export const updateEmployeeHourlyRate = async (
   }
   if (data.standardDailyHours != null && data.standardDailyHours > 0) {
     updateFields.standardDailyHours = Number(data.standardDailyHours);
+  }
+  if (data.overtimeRateMode) {
+    updateFields.overtimeRateMode = data.overtimeRateMode === 'FIXED' ? 'FIXED' : 'MULTIPLIER';
+  }
+  if (data.overtimeFixedRate != null && data.overtimeFixedRate >= 0) {
+    updateFields.overtimeFixedRate = Number(data.overtimeFixedRate);
+  }
+  if (data.overtimeEnabled !== undefined) {
+    updateFields.overtimeEnabled = Boolean(data.overtimeEnabled);
+  }
+  if (data.customOvertimePayment != null) {
+    updateFields.customOvertimePayment = Number(data.customOvertimePayment);
+  }
+  if (data.bonus != null) {
+    updateFields.bonus = Number(data.bonus);
+  }
+  if (data.deductions != null) {
+    updateFields.deductions = Number(data.deductions);
+  }
+  if (data.payrollNotes !== undefined) {
+    updateFields.payrollNotes = String(data.payrollNotes).trim();
   }
 
   const updatedProfile = await EmployeeProfile.findOneAndUpdate(
