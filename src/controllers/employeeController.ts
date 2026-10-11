@@ -12,10 +12,11 @@ import { logAudit } from '../services/auditService';
 import { AuditAction, UserStatus, UserRole, ActivityState, SessionStatus, IDashboardOverview } from '../shared';
 import { DailySummary } from '../models/DailySummary';
 import { Break } from '../models/Break';
-import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { getDateStringInTimezone, getDayRangeInTimezone, getHourInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { Company } from '../models/Company';
 import { liveTelemetryService } from '../services/liveTelemetryService';
 import { emitToCompany } from '../realtime/socketManager';
+import { endWorkSession } from '../services/sessionService';
 
 
 export const getEmployees = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -261,6 +262,10 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
       throw new AppError('Employee not found', 404);
     }
 
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const nowInTz = new Date();
+
     // Fetch active session if any
     let currentSession = null;
     if (profile.currentSessionId && profile.currentStatus !== ActivityState.OFFLINE) {
@@ -269,6 +274,17 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
         companyId: req.companyId,
         status: SessionStatus.ACTIVE
       }).lean();
+
+      // 5:00 PM Auto Shift End Policy
+      if (currentSession && currentSession.status === SessionStatus.ACTIVE) {
+        const curHour = getHourInTimezone(nowInTz, companyTz);
+        const startHour = currentSession.startedAt ? getHourInTimezone(new Date(currentSession.startedAt), companyTz) : 9;
+        if (curHour >= 17 && startHour < 17) {
+          console.log(`[EmployeeController] Auto-concluding session ${currentSession._id} for employee ${id} at 5:00 PM shift end.`);
+          await endWorkSession(req.companyId!, id, currentSession._id.toString(), 'Auto-ended at 5:00 PM (Shift Conclusion)');
+          currentSession = null;
+        }
+      }
     }
 
     // Clean up dangling currentSessionId if session is not active or employee is offline
@@ -287,9 +303,7 @@ export const getEmployeeById = async (req: Request, res: Response, next: NextFun
     }).lean();
 
     // Fetch today's top applications using company timezone
-    const company = await Company.findById(req.companyId);
-    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
-    const todayStr = getDateStringInTimezone(new Date(), companyTz);
+    const todayStr = getDateStringInTimezone(nowInTz, companyTz);
     const todayRange = getDayRangeInTimezone(todayStr, companyTz);
     const topApps = await ApplicationUsage.find({
       companyId: req.companyId,

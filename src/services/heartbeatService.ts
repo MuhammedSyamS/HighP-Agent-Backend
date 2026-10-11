@@ -11,8 +11,9 @@ import { ApplicationUsage } from '../models/ApplicationUsage';
 import { WebsiteActivity } from '../models/WebsiteActivity';
 import { Break } from '../models/Break';
 import { emitToCompany } from '../realtime/socketManager';
-import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { getDateStringInTimezone, getDayRangeInTimezone, getHourInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { liveTelemetryService } from './liveTelemetryService';
+import { endWorkSession } from './sessionService';
 
 export interface HeartbeatParams {
   companyId: string;
@@ -91,7 +92,22 @@ export const processHeartbeat = async (params: HeartbeatParams) => {
     });
   }
 
-  // If the target session is completed or ended, or if profile is OFFLINE without any active session:
+  // 5:00 PM (17:00) Automatic Shift End Policy (Shift Hours: 9:00 AM - 5:00 PM)
+  // Shifts start manually, but automatically conclude at 5:00 PM local time if not ended manually.
+  const currentHourInTz = getHourInTimezone(now, companyTz);
+  const sessionStartedHour = activeSession?.startedAt ? getHourInTimezone(new Date(activeSession.startedAt), companyTz) : 9;
+  if (currentHourInTz >= 17 && sessionStartedHour < 17 && activeSession && activeSession.status === SessionStatus.ACTIVE) {
+    console.log(`[HeartbeatService] Auto-concluding session ${activeSession._id} for employee ${employeeId} at 5:00 PM shift end.`);
+    await endWorkSession(companyId, employeeId, activeSession._id.toString(), 'Auto-ended at 5:00 PM (Shift Conclusion)');
+    return {
+      success: true,
+      serverTime: now.toISOString(),
+      status: ActivityState.OFFLINE,
+      sessionEnded: true,
+      autoEnded5PM: true,
+      message: 'Work session automatically concluded at 5:00 PM.'
+    };
+  }
   const isSessionEnded =
     (!activeSession || activeSession.status === SessionStatus.COMPLETED || activeSession.endedAt != null) &&
     (!profile.currentSessionId || profile.currentStatus === ActivityState.OFFLINE);

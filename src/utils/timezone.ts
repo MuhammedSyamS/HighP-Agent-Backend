@@ -70,3 +70,50 @@ export const getDayRangeInTimezone = (
     end: new Date(`${dateStr}T23:59:59.999Z`)
   };
 };
+
+/**
+ * Returns current hour (0-23) in the given timezone.
+ */
+export const getHourInTimezone = (
+  date: Date = new Date(),
+  timeZone: string = DEFAULT_TIMEZONE
+): number => {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZone || DEFAULT_TIMEZONE,
+      hour: 'numeric',
+      hour12: false
+    });
+    return parseInt(formatter.format(date), 10);
+  } catch {
+    return date.getHours();
+  }
+};
+
+/**
+ * Returns minute of day (0 - 1439) in the given timezone.
+ */
+export const getTimeMinutesInTimezone = (
+  date: Date = new Date(),
+  timeZone: string = DEFAULT_TIMEZONE
+): number => {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZone || DEFAULT_TIMEZONE,
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(date);
+    let h = 0;
+    let m = 0;
+    for (const p of parts) {
+      if (p.type === 'hour') h = parseInt(p.value, 10);
+      if (p.type === 'minute') m = parseInt(p.value, 10);
+    }
+    if (h === 24) h = 0;
+    return h * 60 + m;
+  } catch {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+};

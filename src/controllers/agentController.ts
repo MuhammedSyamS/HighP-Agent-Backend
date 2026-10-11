@@ -10,6 +10,7 @@ import { processHeartbeat } from '../services/heartbeatService';
 import { ingestActivityEvents } from '../services/activityService';
 import { startWorkSession, endWorkSession } from '../services/sessionService';
 import { applicationRegistryService } from '../services/applicationRegistryService';
+import { getDateStringInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
 import { AppError } from '../middleware/errorHandler';
 
 export const registerDevice = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -257,6 +258,17 @@ export const getCurrentAgentSession = async (req: Request, res: Response, next: 
       throw new AppError('No employee profile found', 400);
     }
 
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const todayStr = getDateStringInTimezone(new Date(), companyTz);
+
+    const completedToday = await AttendanceSession.findOne({
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      date: todayStr,
+      status: SessionStatus.COMPLETED
+    }).lean();
+
     const profile = await EmployeeProfile.findOne({
       _id: new mongoose.Types.ObjectId(employeeId),
       companyId: new mongoose.Types.ObjectId(req.companyId)
@@ -281,7 +293,8 @@ export const getCurrentAgentSession = async (req: Request, res: Response, next: 
 
     res.status(200).json({
       success: true,
-      data: session
+      data: session,
+      hasCompletedShiftToday: !!completedToday
     });
   } catch (error) {
     next(error);
