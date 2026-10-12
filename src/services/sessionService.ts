@@ -65,16 +65,7 @@ export const startWorkSession = async (
     }
   }
 
-  // 3. Shift Window Check: Start work is only allowed from 8:30 AM onwards (Shift hours: 9:00 AM - 5:00 PM)
-  const minuteOfDay = getTimeMinutesInTimezone(now, companyTz);
-  if (minuteOfDay < 8 * 60 + 30) {
-    throw new AppError('Work sessions can only be started from 8:30 AM onwards (Standard shift: 9:00 AM – 5:00 PM).', 400);
-  }
-  if (minuteOfDay >= 17 * 60) {
-    throw new AppError('Today\'s work shift concluded at 5:00 PM. Next work session starts tomorrow at 8:30 AM.', 400);
-  }
-
-  // 4. Once a user stops or ends work for today, they cannot restart today (must start next day)
+  // 3. Check for existing daily session for today
   const existingTodaySession = await AttendanceSession.findOne({
     companyId: new mongoose.Types.ObjectId(companyId),
     employeeId: profile._id,
@@ -84,14 +75,19 @@ export const startWorkSession = async (
     ]
   }).sort({ startedAt: 1 });
 
-  if (existingTodaySession && (existingTodaySession.status === SessionStatus.COMPLETED || existingTodaySession.endedAt != null)) {
-    throw new AppError('You have already completed your work session for today. Next work session starts tomorrow at 8:30 AM.', 400);
-  }
-
   let session: IAttendanceSessionDocument;
 
-  if (existingTodaySession && existingTodaySession.status === SessionStatus.ACTIVE) {
+  if (existingTodaySession) {
+    // Seamlessly resume today's session: maintain continuous daily tracking
+    existingTodaySession.status = SessionStatus.ACTIVE;
+    existingTodaySession.endedAt = undefined;
+    existingTodaySession.endReason = undefined;
+    existingTodaySession.lastHeartbeatAt = now;
+    if (!existingTodaySession.date) existingTodaySession.date = todayStr;
+    if (resolvedDeviceId) existingTodaySession.deviceId = resolvedDeviceId;
+    await existingTodaySession.save();
     session = existingTodaySession;
+    console.log(`[SessionService] Resumed today's session for employee ${employeeId} on ${todayStr} (ID: ${session._id})`);
   } else {
     // Create the daily session for today
     session = await AttendanceSession.create({
