@@ -23,6 +23,8 @@ export interface IAttendanceSessionDocument extends Document {
   breakSeconds: number;
   status: SessionStatus;
   endReason?: string;
+  adminNote?: string;
+  isManual?: boolean;
   lastHeartbeatAt?: Date;
   lastSequenceNumber?: number;
   missingSequences?: number[];
@@ -45,6 +47,8 @@ const AttendanceSessionSchema = new Schema<IAttendanceSessionDocument>(
     breakSeconds: { type: Number, default: 0 },
     status: { type: String, enum: Object.values(SessionStatus), default: SessionStatus.ACTIVE },
     endReason: { type: String },
+    adminNote: { type: String },
+    isManual: { type: Boolean, default: false },
     lastHeartbeatAt: { type: Date },
     lastSequenceNumber: { type: Number, default: 0 },
     missingSequences: [{ type: Number }],

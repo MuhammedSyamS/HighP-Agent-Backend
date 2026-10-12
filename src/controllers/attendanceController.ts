@@ -8,8 +8,9 @@ import { EmployeeProfile } from '../models/EmployeeProfile';
 import { DailySummary } from '../models/DailySummary';
 import { Company } from '../models/Company';
 import { AppError } from '../middleware/errorHandler';
-import { UserRole, ActivityState, ActivityEventType } from '../shared';
+import { UserRole, ActivityState, ActivityEventType, SessionStatus } from '../shared';
 import { getDateStringInTimezone, getDayRangeInTimezone, DEFAULT_TIMEZONE } from '../utils/timezone';
+import { rebuildEmployeeDay } from '../services/rebuildService';
 
 export const startSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -649,4 +650,322 @@ export const getAttendanceMonthly = async (req: Request, res: Response, next: Ne
     next(error);
   }
 };
+
+export const updateAttendanceSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      throw new AppError('Permission denied. Only HR and administrators can modify attendance sessions.', 403);
+    }
+    const { id } = req.params;
+    const {
+      startedAt,
+      endedAt,
+      status,
+      activeSeconds,
+      idleSeconds,
+      breakSeconds,
+      endReason,
+      adminNote
+    } = req.body;
+
+    const session = await AttendanceSession.findOne({
+      _id: new mongoose.Types.ObjectId(id),
+      companyId: new mongoose.Types.ObjectId(req.companyId)
+    });
+
+    if (!session) {
+      throw new AppError('Attendance session not found.', 404);
+    }
+
+    if (startedAt !== undefined) session.startedAt = new Date(startedAt);
+    if (endedAt !== undefined) session.endedAt = endedAt ? new Date(endedAt) : undefined;
+    if (status !== undefined) session.status = status;
+    if (activeSeconds !== undefined) session.activeSeconds = Math.max(0, Number(activeSeconds) || 0);
+    if (idleSeconds !== undefined) session.idleSeconds = Math.max(0, Number(idleSeconds) || 0);
+    if (breakSeconds !== undefined) session.breakSeconds = Math.max(0, Number(breakSeconds) || 0);
+    if (endReason !== undefined) session.endReason = endReason;
+    if (adminNote !== undefined) session.adminNote = adminNote;
+
+    session.durationSeconds = (session.activeSeconds || 0) + (session.idleSeconds || 0) + (session.breakSeconds || 0);
+    await session.save();
+
+    if (session.date) {
+      await rebuildEmployeeDay(req.companyId!, session.employeeId.toString(), session.date);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Attendance session updated successfully.',
+      data: session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAttendanceSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      throw new AppError('Permission denied. Only HR and administrators can delete attendance sessions.', 403);
+    }
+    const { id } = req.params;
+
+    const session = await AttendanceSession.findOne({
+      _id: new mongoose.Types.ObjectId(id),
+      companyId: new mongoose.Types.ObjectId(req.companyId)
+    });
+
+    if (!session) {
+      throw new AppError('Attendance session not found.', 404);
+    }
+
+    const employeeId = session.employeeId.toString();
+    const dateStr = session.date;
+
+    await AttendanceSession.deleteOne({ _id: session._id });
+
+    const profile = await EmployeeProfile.findOne({ _id: session.employeeId, companyId: req.companyId });
+    if (profile && profile.currentSessionId && profile.currentSessionId.toString() === session._id.toString()) {
+      profile.currentSessionId = undefined;
+      profile.currentStatus = ActivityState.OFFLINE;
+      await profile.save();
+    }
+
+    if (dateStr) {
+      await rebuildEmployeeDay(req.companyId!, employeeId, dateStr);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Attendance session deleted successfully.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createManualAttendance = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      throw new AppError('Permission denied. Only HR and administrators can create manual attendance records.', 403);
+    }
+    const {
+      employeeId,
+      date,
+      startedAt,
+      endedAt,
+      status = SessionStatus.COMPLETED,
+      activeSeconds = 28800,
+      idleSeconds = 0,
+      breakSeconds = 3600,
+      adminNote = 'Manual HR Attendance Entry'
+    } = req.body;
+
+    if (!employeeId || !date) {
+      throw new AppError('Employee ID and date (YYYY-MM-DD) are required.', 400);
+    }
+
+    const profile = await EmployeeProfile.findOne({
+      _id: new mongoose.Types.ObjectId(employeeId),
+      companyId: new mongoose.Types.ObjectId(req.companyId)
+    });
+
+    if (!profile) {
+      throw new AppError('Employee profile not found.', 404);
+    }
+
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(date, companyTz);
+
+    const startDateTime = startedAt ? new Date(startedAt) : new Date(startOfDay.getTime() + 9 * 3600 * 1000);
+    const endDateTime = endedAt ? new Date(endedAt) : (status === SessionStatus.COMPLETED ? new Date(startOfDay.getTime() + 17 * 3600 * 1000) : undefined);
+
+    const actSec = Math.max(0, Number(activeSeconds) || 0);
+    const idlSec = Math.max(0, Number(idleSeconds) || 0);
+    const brkSec = Math.max(0, Number(breakSeconds) || 0);
+    const durSec = actSec + idlSec + brkSec;
+
+    const session = await AttendanceSession.create({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: profile._id,
+      date,
+      startedAt: startDateTime,
+      endedAt: endDateTime,
+      status,
+      activeSeconds: actSec,
+      idleSeconds: idlSec,
+      breakSeconds: brkSec,
+      durationSeconds: durSec,
+      endReason: adminNote,
+      adminNote,
+      isManual: true,
+      lastHeartbeatAt: endDateTime || startDateTime
+    });
+
+    await rebuildEmployeeDay(req.companyId!, employeeId, date);
+
+    res.status(201).json({
+      success: true,
+      message: 'Manual attendance record created successfully.',
+      data: session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateEmployeeDayAttendance = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      throw new AppError('Permission denied. Only HR and administrators can modify attendance.', 403);
+    }
+    const {
+      employeeId,
+      date,
+      status,
+      startedAt,
+      endedAt,
+      activeSeconds,
+      idleSeconds,
+      breakSeconds,
+      adminNote
+    } = req.body;
+
+    if (!employeeId || !date) {
+      throw new AppError('Employee ID and date are required.', 400);
+    }
+
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(date, companyTz);
+
+    let sessions = await AttendanceSession.find({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      $or: [
+        { date },
+        { startedAt: { $gte: startOfDay, $lte: endOfDay } }
+      ]
+    }).sort({ startedAt: 1 });
+
+    if (sessions.length > 0) {
+      const primarySession = sessions[0];
+      if (startedAt !== undefined) primarySession.startedAt = new Date(startedAt);
+      if (endedAt !== undefined) primarySession.endedAt = endedAt ? new Date(endedAt) : undefined;
+      if (activeSeconds !== undefined) primarySession.activeSeconds = Math.max(0, Number(activeSeconds) || 0);
+      if (idleSeconds !== undefined) primarySession.idleSeconds = Math.max(0, Number(idleSeconds) || 0);
+      if (breakSeconds !== undefined) primarySession.breakSeconds = Math.max(0, Number(breakSeconds) || 0);
+
+      if (status === 'ABSENT') {
+        await AttendanceSession.deleteMany({
+          _id: { $in: sessions.map((s) => s._id) }
+        });
+      } else {
+        if (status === 'PRESENT_ACTIVE') {
+          primarySession.status = SessionStatus.ACTIVE;
+          primarySession.endedAt = undefined;
+        } else if (status === 'SHIFT_COMPLETED' || status === 'HALF_DAY' || status === 'PRESENT') {
+          primarySession.status = SessionStatus.COMPLETED;
+          if (!primarySession.endedAt) primarySession.endedAt = new Date();
+        }
+        if (adminNote) primarySession.adminNote = adminNote;
+        primarySession.durationSeconds = (primarySession.activeSeconds || 0) + (primarySession.idleSeconds || 0) + (primarySession.breakSeconds || 0);
+        await primarySession.save();
+      }
+    } else if (status && status !== 'ABSENT') {
+      const sAt = startedAt ? new Date(startedAt) : new Date(startOfDay.getTime() + 9 * 3600 * 1000);
+      const eAt = endedAt ? new Date(endedAt) : (status === 'PRESENT_ACTIVE' ? undefined : new Date(startOfDay.getTime() + 17 * 3600 * 1000));
+      const actSec = activeSeconds !== undefined ? Number(activeSeconds) : (status === 'HALF_DAY' ? 14400 : 28800);
+      const brkSec = breakSeconds !== undefined ? Number(breakSeconds) : 3600;
+
+      await AttendanceSession.create({
+        companyId: new mongoose.Types.ObjectId(req.companyId),
+        employeeId: new mongoose.Types.ObjectId(employeeId),
+        date,
+        startedAt: sAt,
+        endedAt: eAt,
+        status: status === 'PRESENT_ACTIVE' ? SessionStatus.ACTIVE : SessionStatus.COMPLETED,
+        activeSeconds: actSec,
+        idleSeconds: Number(idleSeconds) || 0,
+        breakSeconds: brkSec,
+        durationSeconds: actSec + (Number(idleSeconds) || 0) + brkSec,
+        endReason: adminNote || `Marked ${status} by HR`,
+        adminNote,
+        isManual: true
+      });
+    }
+
+    const summary = await DailySummary.findOne({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      date
+    });
+
+    if (summary) {
+      if (status) summary.status = status;
+      await summary.save();
+    }
+
+    await rebuildEmployeeDay(req.companyId!, employeeId, date);
+
+    res.status(200).json({
+      success: true,
+      message: 'Attendance record updated successfully.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteEmployeeDayAttendance = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (req.user?.role === UserRole.EMPLOYEE) {
+      throw new AppError('Permission denied. Only HR and administrators can delete attendance records.', 403);
+    }
+    const { employeeId, date } = req.params;
+
+    const company = await Company.findById(req.companyId);
+    const companyTz = company?.config?.allowedTrackingHours?.timezone || DEFAULT_TIMEZONE;
+    const { start: startOfDay, end: endOfDay } = getDayRangeInTimezone(date, companyTz);
+
+    const deletedSessions = await AttendanceSession.find({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      $or: [
+        { date },
+        { startedAt: { $gte: startOfDay, $lte: endOfDay } }
+      ]
+    });
+
+    const deletedIds = deletedSessions.map((s) => s._id);
+    await AttendanceSession.deleteMany({ _id: { $in: deletedIds } });
+
+    const profile = await EmployeeProfile.findOne({
+      _id: new mongoose.Types.ObjectId(employeeId),
+      companyId: req.companyId
+    });
+    if (profile && profile.currentSessionId && deletedIds.some((id) => id.toString() === profile.currentSessionId?.toString())) {
+      profile.currentSessionId = undefined;
+      profile.currentStatus = ActivityState.OFFLINE;
+      await profile.save();
+    }
+
+    await DailySummary.deleteOne({
+      companyId: new mongoose.Types.ObjectId(req.companyId),
+      employeeId: new mongoose.Types.ObjectId(employeeId),
+      date
+    });
+
+    await rebuildEmployeeDay(req.companyId!, employeeId, date);
+
+    res.status(200).json({
+      success: true,
+      message: `Deleted all attendance sessions for employee on ${date}.`
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
